@@ -4,14 +4,14 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 from stmol import showmol
-import py3Dmol
+import py3Dmol  # <--- 關鍵就是這行，一定要有它！
 import graphviz
 import pubchempy as pcp
 
 # --- 網頁設定 ---
 st.set_page_config(page_title="BrainX Drug Screener", page_icon="🧠", layout="wide")
 
-# --- 初始化「暫存記憶體」 (用來存您挑選的藥) ---
+# --- 初始化「暫存記憶體」 ---
 if 'candidate_list' not in st.session_state:
     st.session_state.candidate_list = []
 
@@ -25,13 +25,12 @@ def predict_bbb(mol):
     logp = Descriptors.MolLogP(mol)
     tpsa = Descriptors.TPSA(mol) # 極性表面積
     
-    # 這是非常經典的 BBB 預測法則 (Rule of Thumb)
     score = 0
     if mw < 450: score += 1
     if 1.5 < logp < 5.0: score += 1
     if tpsa < 90: score += 1
     
-    is_permeable = score >= 2 # 只要符合其中兩項，判定為可穿透
+    is_permeable = score >= 2 
     
     return is_permeable, mw, logp, tpsa
 
@@ -66,7 +65,7 @@ if st.sidebar.button("🚀 開始分析"):
                 # 1. 執行 BBB 預測
                 is_bbb, mw, logp, tpsa = predict_bbb(mol)
                 
-                # 存入 Session State 供後續顯示
+                # 存入 Session State
                 st.session_state.current_analysis = {
                     "name": search_input,
                     "smiles": smiles,
@@ -74,10 +73,10 @@ if st.sidebar.button("🚀 開始分析"):
                     "mw": mw,
                     "logp": logp,
                     "tpsa": tpsa,
-                    "mol": mol # 暫存分子物件畫圖用
+                    "mol": mol 
                 }
 
-# --- 顯示分析結果 (如果有的話) ---
+# --- 顯示分析結果 ---
 if 'current_analysis' in st.session_state:
     data = st.session_state.current_analysis
     mol = data['mol']
@@ -85,26 +84,22 @@ if 'current_analysis' in st.session_state:
     st.divider()
     st.subheader(f"🧪 分析結果: {data['name']}")
     
-    # 版面：左邊數據 + BBB，中間 3D，右邊基因圖
     col1, col2, col3 = st.columns([1, 2, 1.5])
     
     with col1:
         st.markdown("### 🩸 血腦屏障 (BBB) 預測")
         if data['is_bbb']:
-            st.success("✅ **高穿透率 (High Permeability)**")
-            st.markdown("此藥物具有良好的親脂性與分子量，極有可能穿透 BBB。")
+            st.success("✅ **高穿透率**")
+            st.caption("具備良好的親脂性與分子量，極有可能穿透 BBB。")
         else:
-            st.error("⚠️ **穿透力不佳 (Low Permeability)**")
-            st.markdown("分子過大或極性太高，建議進行結構修飾。")
+            st.error("⚠️ **穿透力不佳**")
+            st.caption("分子過大或極性太高，建議進行結構修飾。")
             
         st.markdown("---")
-        st.metric("分子量 (MW)", f"{data['mw']:.1f}")
         st.metric("親脂性 (LogP)", f"{data['logp']:.2f}")
         st.metric("極性表面積 (TPSA)", f"{data['tpsa']:.1f}")
         
-        # 加入清單按鈕
         if st.button("⭐ 加入候選清單 (Add to List)"):
-            # 檢查是否重複
             if not any(d['Name'] == data['name'] for d in st.session_state.candidate_list):
                 st.session_state.candidate_list.append({
                     "Name": data['name'],
@@ -119,7 +114,46 @@ if 'current_analysis' in st.session_state:
 
     with col2:
         st.markdown("### 🧬 3D 結構視圖")
+        # 這裡是您原本報錯的地方，只要上面有 import py3Dmol，這裡就不會錯了
         mol = Chem.AddHs(mol)
         AllChem.EmbedMolecule(mol)
         AllChem.MMFFOptimizeMolecule(mol)
-        view = py3D
+        view = py3Dmol.view(width=500, height=400)
+        pdb = Chem.MolToPDBBlock(mol)
+        view.addModel(pdb, 'pdb')
+        view.setStyle({'stick': {}})
+        view.zoomTo()
+        view.setBackgroundColor('#f9f9f9')
+        showmol(view, height=400, width=500)
+
+    with col3:
+        st.markdown("### 🕸️ 基因關聯圖")
+        graph = graphviz.Digraph()
+        graph.attr(rankdir='TB', bgcolor='transparent')
+        graph.node('D', data['name'], shape='doublecircle', style='filled', fillcolor='#E0F7FA')
+        graph.node('GLT1', 'GLT-1 / EAAT2', shape='hexagon', style='filled', fillcolor='#FFCC80')
+        graph.node('NMDA', 'NMDA Receptor', shape='ellipse')
+        
+        graph.edge('D', 'GLT1', label="Target", color='red')
+        graph.edge('D', 'NMDA', label="Modulate", style='dashed')
+        st.graphviz_chart(graph)
+
+# --- 區塊 2: 候選藥物清單 ---
+st.divider()
+st.subheader("📋 我的候選藥物清單")
+
+if len(st.session_state.candidate_list) > 0:
+    df = pd.DataFrame(st.session_state.candidate_list)
+    st.dataframe(df, column_config={"SMILES": None}, use_container_width=True)
+    
+    c1, c2 = st.columns([1, 5])
+    with c1:
+        if st.button("🗑️ 清空清單"):
+            st.session_state.candidate_list = []
+            st.rerun()
+    with c2:
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 下載清單報告 (CSV)", csv, "brainx_candidates.csv", "text/csv")
+
+else:
+    st.info("目前清單是空的。請在上方搜尋藥物並點擊「加入候選清單」。")
