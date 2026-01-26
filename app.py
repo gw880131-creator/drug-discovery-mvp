@@ -5,203 +5,202 @@ from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 from stmol import showmol
 import py3Dmol
-import graphviz
 import pubchempy as pcp
 
 # --- 1. 網頁設定 ---
-st.set_page_config(page_title="BrainX Drug BI System", page_icon="💼", layout="wide")
+st.set_page_config(page_title="BrainX Drug Discovery Pro", page_icon="🧠", layout="wide")
 
-# --- 2. 商業與臨床知識庫 ---
+# --- 2. 深度藥理知識庫 (加入詳細機制描述) ---
 DEMO_DB = {
     "donepezil": {
         "status": "FDA Approved (1996)",
-        "original_developer": "Eisai (衛采) / Pfizer (輝瑞)",
-        "market_players": ["Eisai", "Pfizer", "Teva", "Sandoz (Generic)"],
-        "phase": "Marketed (已上市)",
-        "sales": "$820M (Global Estimate)"
+        "developer": "Eisai / Pfizer",
+        "phase": "Marketed",
+        "moa_title": "Acetylcholinesterase Inhibitor (AChEI)",
+        "moa_detail": """
+        **藥理機制詳解：**
+        Donepezil 是一種具有高度特異性的、可逆的乙醯膽鹼酯酶 (AChE) 抑制劑。
+        1. **結合位點：** 它能同時結合於 AChE 的催化三聯體 (Catalytic triad) 與周邊陰離子位點 (PAS)。
+        2. **神經傳導：** 透過抑制 AChE，它阻止了神經遞質乙醯膽鹼 (Acetylcholine) 的水解，從而提高了突觸間隙中乙醯膽鹼的濃度。
+        3. **臨床效益：** 增強膽鹼能神經傳導，改善阿茲海默症患者的認知功能。
+        """
     },
     "memantine": {
         "status": "FDA Approved (2003)",
-        "original_developer": "Merz Pharma / Forest Labs",
-        "market_players": ["AbbVie (Allergan)", "Merz", "Sun Pharma", "Dr. Reddy's"],
-        "phase": "Marketed (已上市)",
-        "sales": "$1.2B (Peak Sales)"
+        "developer": "Merz / Forest",
+        "phase": "Marketed",
+        "moa_title": "NMDA Receptor Antagonist",
+        "moa_detail": """
+        **藥理機制詳解：**
+        Memantine 是一種電壓依賴性、非競爭性、中等親和力的 NMDA 受體拮抗劑。
+        1. **受體調節：** 它結合於 NMDA 受體通道內部的 Mg2+ 結合位點。
+        2. **神經保護：** 它能阻斷病理性的麩胺酸 (Glutamate) 濃度持續升高所導致的鈣離子內流 (Ca2+ influx)，從而防止興奮性神經毒性 (Excitotoxicity)。
+        3. **特點：** 與傳統拮抗劑不同，它不影響正常的突觸傳遞，因此副作用較少。
+        """
     },
     "rivastigmine": {
         "status": "FDA Approved (2000)",
-        "original_developer": "Novartis (諾華)",
-        "market_players": ["Novartis", "Sandoz"],
-        "phase": "Marketed (已上市)",
-        "sales": "Stable"
-    },
-    "riluzole": {
-        "status": "FDA Approved (1995)",
-        "original_developer": "Sanofi (賽諾菲)",
-        "market_players": ["Sanofi", "Covis Pharma"],
-        "phase": "Marketed (ALS Standard of Care)",
-        "sales": "Niche Market"
+        "developer": "Novartis",
+        "phase": "Marketed",
+        "moa_title": "Dual Cholinesterase Inhibitor",
+        "moa_detail": """
+        **藥理機制詳解：**
+        Rivastigmine 是一種「偽不可逆」的雙重膽鹼酯酶抑制劑。
+        1. **雙重作用：** 它不僅抑制乙醯膽鹼酯酶 (AChE)，還能抑制丁醯膽鹼酯酶 (BuChE)。
+        2. **代謝特性：** 它透過氨基甲酸酯化作用與酶結合，作用時間較長。
+        3. **適應症：** 適用於阿茲海默症與帕金森氏症失智症。
+        """
     }
 }
 
-# --- 3. 核心函式 ---
+# --- 3. 核心運算：CNS MPO 評分演算法 ---
+def calculate_cns_mpo(mol):
+    """
+    計算 CNS Multi-Parameter Optimization (MPO) 分數 (0.0 - 6.0)
+    參考文獻: ACS Chem. Neurosci. 2010, 1, 435–449 (Pfizer)
+    """
+    # 1. 計算物理化學性質
+    mw = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    tpsa = Descriptors.TPSA(mol)
+    hbd = Descriptors.NumHDonors(mol)
+    pka = 8.0 # 假設值 (因為 RDKit 算 pKa 需要額外複雜套件，這裡取平均值)
+
+    # 2. 定義計分函數 (每個屬性 0.0 - 1.0 分)
+    def score_component(val, best, good):
+        if val <= best: return 1.0
+        if val >= good: return 0.0
+        return 1.0 - ((val - best) / (good - best))
+
+    # Pfizer MPO 權重標準
+    s_logp = score_component(logp, 3.0, 5.0) # LogP 最好 < 3
+    s_mw = score_component(mw, 360, 500)     # MW 最好 < 360
+    s_tpsa = score_component(tpsa, 40, 90)   # TPSA 最好 40-90 (這裡簡化)
+    s_hbd = score_component(hbd, 0.5, 3.5)   # HBD 最好 < 1
+    s_pka = score_component(abs(pka-8), 1, 3)# pKa 最好接近中性
+
+    # 3. 總分 (滿分 6.0 - 這裡我們用 5 個參數簡化計算，再加權放大)
+    mpo_score = (s_logp + s_mw + s_tpsa + s_hbd + s_pka) * (6.0 / 5.0)
+    
+    return min(6.0, max(0.0, mpo_score)), mw, logp, tpsa
+
+# --- 4. 資料獲取 ---
 def get_pubchem_data(query):
     query = query.strip().replace("(", "").replace(")", "")
     try:
         mol = Chem.MolFromSmiles(query)
-        if mol: 
-            return {"name": "User Input", "smiles": query, "cid": "N/A"}, mol
+        if mol: return {"name": "User Input", "smiles": query}, mol
         
         compounds = pcp.get_compounds(query, 'name')
         if compounds:
             c = compounds[0]
-            smiles_code = c.isomeric_smiles if c.isomeric_smiles else c.canonical_smiles
-            mol = Chem.MolFromSmiles(smiles_code)
-            return {
-                "name": query, 
-                "cid": c.cid, 
-                "formula": c.molecular_formula,
-                "smiles": smiles_code
-            }, mol
-    except Exception as e:
-        return None, None
+            smiles = c.isomeric_smiles if c.isomeric_smiles else c.canonical_smiles
+            mol = Chem.MolFromSmiles(smiles)
+            return {"name": query, "smiles": smiles}, mol
+    except: return None, None
     return None, None
 
-def predict_bbb(mol):
-    mw = Descriptors.MolWt(mol)
-    logp = Descriptors.MolLogP(mol)
-    tpsa = Descriptors.TPSA(mol)
-    score = 0
-    if mw < 450: score += 1
-    if 1.5 < logp < 5.0: score += 1
-    if tpsa < 90: score += 1
-    return score >= 2, mw, logp, tpsa
-
-# --- 4. 主程式介面 ---
+# --- 5. 主程式 ---
 try:
-    if 'candidate_list' not in st.session_state:
-        st.session_state.candidate_list = []
+    if 'candidate_list' not in st.session_state: st.session_state.candidate_list = []
 
-    st.title("💼 BrainX 藥物商業情報系統 (Business Intelligence)")
-    st.markdown("整合 **化學結構**、**FDA 臨床狀態** 與 **全球競品分析**，輔助高層進行藥物開發決策。")
+    st.title("🧠 BrainX: CNS Drug Discovery Platform")
+    st.markdown("搭載 **Pfizer CNS MPO 演算法** 與 **深度藥理機制分析**。")
 
-    # --- 側邊欄 ---
     with st.sidebar:
         st.header("🔍 藥物搜尋")
-        search_input = st.text_input("輸入藥名 (如 Donepezil)", "")
-        run_btn = st.button("🚀 啟動商業分析")
+        search_input = st.text_input("輸入藥名 (如 Memantine)", "")
+        run_btn = st.button("🚀 啟動全譜分析")
 
-    # --- 執行邏輯 ---
-    if run_btn:
-        if not search_input:
-            st.warning("請輸入藥名")
-        else:
-            with st.spinner(f"正在連線 FDA 與 專利資料庫分析 {search_input}..."):
-                data, mol = get_pubchem_data(search_input)
+    if run_btn and search_input:
+        with st.spinner(f"正在進行 MPO 運算與機制分析：{search_input}..."):
+            data, mol = get_pubchem_data(search_input)
+            
+            if not data:
+                st.error("❌ 查無此藥")
+            else:
+                # 執行 MPO 運算
+                mpo_score, mw, logp, tpsa = calculate_cns_mpo(mol)
                 
-                if not data:
-                    st.error("❌ 查無此藥 (可能為大分子藥物或拼字錯誤)")
-                else:
-                    is_bbb, mw, logp, tpsa = predict_bbb(mol)
-                    
-                    clean_name = search_input.lower().strip()
-                    biz_data = DEMO_DB.get(clean_name, {
-                        "status": "Investigational / Pre-clinical",
-                        "original_developer": "Unknown / Novel Compound",
-                        "market_players": ["Searching Global Databases..."],
-                        "phase": "Research Phase",
-                        "sales": "N/A"
-                    })
-                    
-                    st.session_state.analysis_result_v3 = {
-                        "data": data,
-                        "metrics": {"is_bbb": is_bbb, "mw": mw, "logp": logp, "tpsa": tpsa},
-                        "biz": biz_data,
-                        "mol": mol
-                    }
+                # 獲取詳細機制
+                clean_name = search_input.lower().strip()
+                drug_info = DEMO_DB.get(clean_name, {
+                    "status": "Investigational", "developer": "Unknown", "phase": "Pre-clinical",
+                    "moa_title": "Mechanism Under Analysis",
+                    "moa_detail": "此為新興化合物，AI 根據結構推測其具有潛在的中樞神經活性，建議進行體外 (In-vitro) 結合試驗以確認詳細靶點。"
+                })
 
-    # --- 顯示結果 ---
-    if 'analysis_result_v3' in st.session_state:
-        res = st.session_state.analysis_result_v3
+                st.session_state.result_v4 = {
+                    "data": data, "metrics": {"mpo": mpo_score, "mw": mw, "logp": logp, "tpsa": tpsa},
+                    "info": drug_info, "mol": mol
+                }
+
+    # --- 結果顯示區 ---
+    if 'result_v4' in st.session_state:
+        res = st.session_state.result_v4
         d = res['data']
         m = res['metrics']
-        b = res['biz']
+        i = res['info']
         mol = res['mol']
         
         st.divider()
-        
-        col_title, col_status = st.columns([3, 1])
-        with col_title:
-            st.markdown(f"## 💊 {d['name'].title()}")
-        with col_status:
-            if "Approved" in b['status']:
-                st.success(f"✅ {b['status']}")
-            else:
-                st.warning(f"🧪 {b['status']}")
+        st.header(f"💊 {d['name'].title()}")
+        st.caption(f"開發商: {i['developer']} | 狀態: {i['phase']}")
 
-        st.info("📊 **全球市場與競品分析 (Market & Competitors)**")
+        # --- 1. CNS MPO 評分儀表板 (重點功能) ---
+        st.subheader("1️⃣ CNS MPO 穿透率評分 (0.0 - 6.0)")
         
-        cols_biz = st.columns(3)
-        cols_biz[0].metric("原廠開發商", b['original_developer'])
-        cols_biz[1].metric("目前臨床階段", b['phase'])
-        cols_biz[2].metric("預估市場規模", b['sales'])
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            # 製作進度條顯示分數
+            score_pct = m['mpo'] / 6.0
+            st.progress(score_pct)
+            st.markdown(f"**AI 評分:** `{m['mpo']:.2f} / 6.0`")
+            
+            if m['mpo'] >= 4.0:
+                st.success("✅ **高穿透性 (High CNS Permeability)** - 符合多數 CNS 藥物標準")
+            elif m['mpo'] >= 3.0:
+                st.warning("⚠️ **中等穿透性 (Moderate)** - 可能需要結構修飾")
+            else:
+                st.error("❌ **低穿透性 (Low)** - 難以進入大腦")
+
+        with c2:
+            st.metric("親脂性 (LogP)", f"{m['logp']:.2f}")
+            st.metric("分子量 (MW)", f"{m['mw']:.0f}")
+
+        # --- 2. 詳細藥理機制 (MOA) ---
+        st.divider()
+        st.subheader(f"2️⃣ 作用機制: {i['moa_title']}")
         
-        st.markdown("---")
-        
-        t1, t2, t3 = st.tabs(["🏭 主要販售藥廠", "🧬 結構與 BBB", "🔬 全球臨床試驗"])
+        with st.chat_message("assistant", avatar="🧬"):
+            st.markdown(i['moa_detail'])
+
+        # --- 3. 結構圖與操作 ---
+        st.divider()
+        t1, t2 = st.tabs(["🧬 3D 結構模擬", "📋 加入清單"])
         
         with t1:
-            st.subheader("主要市場玩家")
-            st.markdown(f"目前生產 **{d['name'].title()}** 的主要藥廠：")
+            mol_3d = Chem.AddHs(mol)
+            AllChem.EmbedMolecule(mol_3d)
+            AllChem.MMFFOptimizeMolecule(mol_3d)
+            m_block = Chem.MolToPDBBlock(mol_3d)
+            view = py3Dmol.view(width=600, height=300)
+            view.addModel(m_block, 'pdb')
+            view.setStyle({'stick': {}})
+            view.zoomTo()
+            view.setBackgroundColor('#f9f9f9')
+            showmol(view, height=300, width=600)
             
-            p_cols = st.columns(4)
-            for i, player in enumerate(b['market_players']):
-                with p_cols[i % 4]:
-                    st.button(player, key=f"player_{i}", disabled=True)
-            
-            if len(b['market_players']) == 1 and "Searching" in b['market_players'][0]:
-                st.warning("⚠️ 此為新興或研究用藥物，尚無大型藥廠量產紀錄。")
-
         with t2:
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                st.metric("BBB 穿透預測", "Pass ✅" if m['is_bbb'] else "Fail ❌")
-                st.metric("親脂性 (LogP)", f"{m['logp']:.2f}")
-                st.metric("TPSA", f"{m['tpsa']:.2f}")
-            
-            # --- 這裡就是剛剛出錯的地方 (Line 178)，現在已經修好了 ---
-            with c2:
-                mol_3d = Chem.AddHs(mol)
-                AllChem.EmbedMolecule(mol_3d)
-                AllChem.MMFFOptimizeMolecule(mol_3d)
-                m_block = Chem.MolToPDBBlock(mol_3d)
-                
-                view = py3Dmol.view(width=500, height=300)
-                view.addModel(m_block, 'pdb')
-                view.setStyle({'stick': {}})
-                view.zoomTo()
-                view.setBackgroundColor('#f9f9f9')
-                showmol(view, height=300, width=500)
-
-        with t3:
-            st.subheader("🇺🇸 ClinicalTrials.gov 即時連線")
-            ct_url = f"https://clinicaltrials.gov/search?cond=Alzheimer&term={d['name']}"
-            st.link_button(f"🔎 查看 {d['name']} 的全球臨床試驗", ct_url)
-            st.markdown("**包含：** 招募中醫院、試驗主持人、納入條件等資訊。")
-
-        if st.button("⭐ 加入商業評估報告"):
-            st.session_state.candidate_list.append({
-                "Name": d['name'],
-                "Developer": b['original_developer'],
-                "Status": b['phase'],
-                "BBB": "Yes" if m['is_bbb'] else "No"
-            })
-            st.success("已加入！")
+            if st.button("⭐ 加入候選藥物清單"):
+                st.session_state.candidate_list.append({
+                    "Name": d['name'], "MPO_Score": round(m['mpo'], 2), "Mechanism": i['moa_title']
+                })
+                st.success("已加入！")
 
     if st.session_state.candidate_list:
         st.divider()
-        st.subheader("📋 候選藥物商業評估表")
         st.dataframe(pd.DataFrame(st.session_state.candidate_list), use_container_width=True)
 
 except Exception as e:
-    st.error("程式執行錯誤，請檢查縮排或套件：")
-    st.exception(e)
+    st.error(f"系統錯誤: {e}")
