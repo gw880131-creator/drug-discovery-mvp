@@ -4,7 +4,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 from stmol import showmol
-import py3Dmol  # <--- 關鍵就是這行，一定要有它！
+import py3Dmol  # <--- 關鍵修正：這裡一定要引用它！
 import graphviz
 import pubchempy as pcp
 
@@ -36,6 +36,9 @@ def predict_bbb(mol):
 
 def get_structure(text):
     """嘗試從藥名或 SMILES 取得結構"""
+    # 移除使用者不小心輸入的空白或標點符號
+    text = text.strip().replace("(", "").replace(")", "")
+    
     mol = Chem.MolFromSmiles(text)
     if mol: return mol, text, "SMILES Input"
     try:
@@ -50,7 +53,7 @@ st.markdown("輸入藥名或結構，AI 即時預測 **血腦屏障 (BBB)** 穿�
 
 # --- 區塊 1: 搜尋與分析 ---
 st.sidebar.header("🔍 藥物搜尋 (Search)")
-search_input = st.sidebar.text_input("輸入藥名 (如 Levodopa) 或 SMILES", "")
+search_input = st.sidebar.text_input("輸入藥名 (如 Donepezil) 或 SMILES", "")
 
 if st.sidebar.button("🚀 開始分析"):
     if not search_input:
@@ -60,7 +63,7 @@ if st.sidebar.button("🚀 開始分析"):
             mol, smiles, source = get_structure(search_input)
             
             if not mol:
-                st.error("❌ 找不到此藥物結構，請確認拼字。")
+                st.error(f"❌ 找不到 '{search_input}' 的結構。\n提示：此系統專用於「小分子藥物」，若為抗體藥物 (如 Lecanemab) 請切換至大分子模組。")
             else:
                 # 1. 執行 BBB 預測
                 is_bbb, mw, logp, tpsa = predict_bbb(mol)
@@ -98,6 +101,7 @@ if 'current_analysis' in st.session_state:
         st.markdown("---")
         st.metric("親脂性 (LogP)", f"{data['logp']:.2f}")
         st.metric("極性表面積 (TPSA)", f"{data['tpsa']:.1f}")
+        st.metric("分子量 (MW)", f"{data['mw']:.1f}")
         
         if st.button("⭐ 加入候選清單 (Add to List)"):
             if not any(d['Name'] == data['name'] for d in st.session_state.candidate_list):
@@ -108,16 +112,17 @@ if 'current_analysis' in st.session_state:
                     "LogP": round(data['logp'], 2),
                     "SMILES": data['smiles']
                 })
-                st.toast(f"已將 {data['name']} 加入清單！")
+                st.success(f"已將 {data['name']} 加入清單！")
             else:
                 st.warning("此藥物已在清單中。")
 
     with col2:
         st.markdown("### 🧬 3D 結構視圖")
-        # 這裡是您原本報錯的地方，只要上面有 import py3Dmol，這裡就不會錯了
+        # 這裡會使用到 py3Dmol，一定要確認上面有 import
         mol = Chem.AddHs(mol)
         AllChem.EmbedMolecule(mol)
         AllChem.MMFFOptimizeMolecule(mol)
+        
         view = py3Dmol.view(width=500, height=400)
         pdb = Chem.MolToPDBBlock(mol)
         view.addModel(pdb, 'pdb')
