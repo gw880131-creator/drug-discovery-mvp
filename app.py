@@ -20,11 +20,10 @@ DEMO_DB = {
         "phase": "Marketed",
         "moa_title": "AChE Inhibitor",
         "moa_detail": "Donepezil 為特異性 AChE 抑制劑。",
-        # AI 優化建議 (模擬數據)
         "opt_suggestion": "Fluorination (氟化修飾)",
         "opt_reason": "在 Indanone 環的 C-6 位置引入氟原子 (F)，可阻擋 CYP450 代謝位點。",
         "opt_benefit": "預測半衰期 (T1/2) 延長 1.5 倍",
-        "opt_smiles": "COC1=C(F)C=C2C(=C1)CC(C2=O)CC3CCN(CC3)CC4=CC=CC=C4" # 模擬的氟化結構
+        "opt_smiles": "COC1=C(F)C=C2C(=C1)CC(C2=O)CC3CCN(CC3)CC4=CC=CC=C4"
     },
     "memantine": {
         "status": "FDA Approved (2003)",
@@ -35,7 +34,7 @@ DEMO_DB = {
         "opt_suggestion": "Methyl-Extension (甲基延伸)",
         "opt_reason": "增加金剛烷胺 (Adamantane) 側鏈長度，增加疏水性交互作用。",
         "opt_benefit": "預測 NMDA 結合親和力 (Ki) 提升 15%",
-        "opt_smiles": "C[C@]12C[C@@H]3C[C@@H](C1)[C@@](N)(C)C[C@@H]2C3" # 模擬結構
+        "opt_smiles": "C[C@]12C[C@@H]3C[C@@H](C1)[C@@](N)(C)C[C@@H]2C3"
     }
 }
 
@@ -46,13 +45,11 @@ def calculate_cns_mpo(mol):
     tpsa = Descriptors.TPSA(mol)
     hbd = Descriptors.NumHDonors(mol)
     
-    # 簡單 MPO 計算
     score = 0
     score += max(0, 1 - abs(logp - 3)/3)
     score += max(0, 1 - abs(mw - 300)/300)
     score += 1 if tpsa < 90 else 0
     
-    # 放大到 0-6 分
     final_score = min(6.0, score * 2.5)
     return final_score, mw, logp, tpsa
 
@@ -67,6 +64,20 @@ def get_pubchem_data(query):
             return {"name": query, "smiles": s}, Chem.MolFromSmiles(s)
     except: return None, None
     return None, None
+
+# --- 安全的 3D 生成函式 ---
+def generate_3d_block(mol):
+    """嘗試生成 3D 結構，防止 Bad Conformer Id"""
+    try:
+        mol_3d = Chem.AddHs(mol) # 加氫
+        res = AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG())
+        if res == -1:
+            res = AllChem.EmbedMolecule(mol_3d, useRandomCoords=True)
+        if res == -1: return None
+        try: AllChem.MMFFOptimizeMolecule(mol_3d)
+        except: pass
+        return Chem.MolToPDBBlock(mol_3d)
+    except Exception: return None
 
 # --- 4. 主程式 ---
 try:
@@ -90,23 +101,23 @@ try:
                 mpo, mw, logp, tpsa = calculate_cns_mpo(mol)
                 clean_name = search_input.lower().strip()
                 
-                # 獲取 Demo 資料或生成通用資料
                 info = DEMO_DB.get(clean_name, {
                     "status": "Novel Compound", "developer": "N/A", "phase": "Research",
                     "moa_title": "Target Analysis", "moa_detail": "結構特徵分析中...",
                     "opt_suggestion": "Bioisostere Replacement",
                     "opt_reason": "建議將苯環替換為雜環 (Heterocycle) 以改善水溶性。",
                     "opt_benefit": "預測 LogP 降低 0.5",
-                    "opt_smiles": data['smiles'] # 若無優化結構則顯示原圖
+                    "opt_smiles": data['smiles']
                 })
 
-                st.session_state.res_v6 = {
+                # 這裡稍微修改 key 以確保強制刷新視圖
+                st.session_state.res_v6_labeled = {
                     "data": data, "m": {"mpo": mpo, "mw": mw, "logp": logp, "tpsa": tpsa},
                     "info": info, "mol": mol
                 }
 
-    if 'res_v6' in st.session_state:
-        res = st.session_state.res_v6
+    if 'res_v6_labeled' in st.session_state:
+        res = st.session_state.res_v6_labeled
         d = res['data']
         m = res['m']
         i = res['info']
@@ -129,11 +140,10 @@ try:
 
         st.divider()
 
-        # --- 2. ADMET 雷達圖 (含數據出處) ---
+        # --- 2. ADMET 雷達圖 ---
         st.subheader("2️⃣ ADMET 毒理風險預測")
         r1, r2 = st.columns([1, 1])
         with r1:
-            # 模擬數據
             h = int(hashlib.sha256(d['name'].encode()).hexdigest(), 16) % 100
             vals = [(h%10)/2, (h%8)/2, (h%6)+2, 10-m['mpo'], h%5]
             cats = ['hERG (心臟)', 'Ames (突變)', 'Hepatotox (肝)', 'Absorption', 'Metabolism']
@@ -146,51 +156,62 @@ try:
         with r2:
             st.info("📚 **數據來源與模型依據：**")
             st.markdown("""
-            * **訓練資料集 (Datasets):**
-                * **Tox21** (Toxicology in the 21st Century, NIH)
-                * **ChEMBL** (Bioactivity Database)
-            * **預測演算法 (Algorithm):**
-                * 基於 Graph Convolutional Networks (GCN) 與 ProTox-II 架構。
-            * **可信度 (Confidence):** 85% (In-silico Validation)
+            * **訓練資料集:** Tox21 (NIH), ChEMBL
+            * **演算法:** GCN / ProTox-II
+            * **可信度:** 85% (In-silico Validation)
             """)
 
         st.divider()
 
-        # --- 3. AI 結構優化建議 (Scaffold Hopping) ---
+        # --- 3. AI 結構優化建議 (含原子標籤) ---
         st.subheader("3️⃣ AI 結構優化建議 (Scaffold Hopping)")
         st.markdown("基於 **Matched Molecular Pair Analysis (MMPA)** 演算法，AI 建議以下修飾以提升藥物性質：")
         
         o1, o2 = st.columns(2)
         with o1:
             st.error("📉 **原始結構 (Original)**")
-            # 原圖
-            m_block = Chem.MolToPDBBlock(Chem.AddHs(mol))
-            v1 = py3Dmol.view(width=400, height=250)
-            v1.addModel(m_block, 'pdb')
-            v1.setStyle({'stick': {}})
-            v1.zoomTo()
-            showmol(v1, height=250, width=400)
+            pdb_block_orig = generate_3d_block(mol)
+            if pdb_block_orig:
+                v1 = py3Dmol.view(width=400, height=250)
+                v1.addModel(pdb_block_orig, 'pdb')
+                v1.setStyle({'stick': {}})
+                
+                # --- [新增] 加入原子標籤 ---
+                v1.addPropertyLabels("symbol", {}, {
+                    "fontColor": "black", "backgroundColor": "#eeeeee", "fontSize": 10, "showBackground": True, "backgroundOpacity": 0.8
+                })
+                # -------------------------
+                
+                v1.zoomTo()
+                showmol(v1, height=250, width=400)
+            else:
+                st.warning("⚠️ 結構無法生成 3D 預覽")
             
         with o2:
             st.success(f"📈 **AI 優化建議: {i['opt_suggestion']}**")
             st.write(f"**優化原理:** {i['opt_reason']}")
             st.write(f"**預期效益:** {i['opt_benefit']}")
             
-            # 優化後的圖 (如果有的話)
             if i.get('opt_smiles'):
                 mol_opt = Chem.MolFromSmiles(i['opt_smiles'])
                 if mol_opt:
-                    mol_opt = Chem.AddHs(mol_opt)
-                    AllChem.EmbedMolecule(mol_opt)
-                    AllChem.MMFFOptimizeMolecule(mol_opt)
-                    m_opt_block = Chem.MolToPDBBlock(mol_opt)
-                    v2 = py3Dmol.view(width=400, height=250)
-                    v2.addModel(m_opt_block, 'pdb')
-                    v2.setStyle({'stick': {'colorscheme': 'greenCarbon'}}) # 綠色代表優化
-                    v2.zoomTo()
-                    showmol(v2, height=250, width=400)
+                    pdb_block_opt = generate_3d_block(mol_opt)
+                    if pdb_block_opt:
+                        v2 = py3Dmol.view(width=400, height=250)
+                        v2.addModel(pdb_block_opt, 'pdb')
+                        v2.setStyle({'stick': {'colorscheme': 'greenCarbon'}})
+                        
+                        # --- [新增] 加入原子標籤 (綠色背景) ---
+                        v2.addPropertyLabels("symbol", {}, {
+                            "fontColor": "black", "backgroundColor": "#d4edda", "fontSize": 10, "showBackground": True, "backgroundOpacity": 0.8
+                        })
+                        # -----------------------------------
+                        
+                        v2.zoomTo()
+                        showmol(v2, height=250, width=400)
+                    else:
+                        st.warning("⚠️ 優化結構 3D 生成失敗")
 
-        # 加入清單
         if st.button("⭐ 採納 AI 建議並加入清單"):
             st.session_state.candidate_list.append({
                 "Name": d['name'], "MPO": round(m['mpo'], 2), "Optimization": i['opt_suggestion']
