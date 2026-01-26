@@ -7,3 +7,4 @@ ipython_genutils
 pubchempy
 graphviz
 pandas
+plotly
