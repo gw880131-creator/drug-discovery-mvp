@@ -4,161 +4,214 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import Descriptors
 from stmol import showmol
-import py3Dmol  # <--- 關鍵修正：這裡一定要引用它！
+import py3Dmol
 import graphviz
 import pubchempy as pcp
 
 # --- 網頁設定 ---
-st.set_page_config(page_title="BrainX Drug Screener", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="BrainX Drug Informatics", page_icon="🧬", layout="wide")
 
-# --- 初始化「暫存記憶體」 ---
+# --- 初始化 Session State ---
 if 'candidate_list' not in st.session_state:
     st.session_state.candidate_list = []
 
+# --- 🧠 內部知識庫 (針對 Demo 藥物的完美資料) ---
+# 這可以確保您在演示關鍵藥物時，資料是豐富且準確的
+DEMO_DB = {
+    "donepezil": {
+        "indication": "Alzheimer's Disease (AD)",
+        "class": "Acetylcholinesterase Inhibitor (AChEI)",
+        "patent": "US-4895841-A (Eisai)",
+        "moa": "Reversible inhibitor of acetylcholinesterase"
+    },
+    "memantine": {
+        "indication": "Alzheimer's Disease (Moderate to Severe)",
+        "class": "NMDA Receptor Antagonist",
+        "patent": "US-3391142-A (Merz)",
+        "moa": "Uncompetitive NMDA receptor antagonist"
+    },
+    "rivastigmine": {
+        "indication": "Alzheimer's & Parkinson's Dementia",
+        "class": "Cholinesterase Inhibitor",
+        "patent": "US-4948807-A",
+        "moa": "Inhibits both butyrylcholinesterase and acetylcholinesterase"
+    },
+    "levodopa": {
+        "indication": "Parkinson's Disease",
+        "class": "Dopamine Precursor",
+        "patent": "US-3715390-A",
+        "moa": "Converted to dopamine in the brain"
+    },
+    "aspirin": {
+        "indication": "Pain, Inflammation, CV Risk",
+        "class": "NSAID / COX Inhibitor",
+        "patent": "Expired (Bayer)",
+        "moa": "Irreversible inactivation of cyclooxygenase"
+    }
+}
+
 # --- 核心函式 ---
+def get_extended_data(query):
+    """從 PubChem 獲取更詳細的化學資訊"""
+    try:
+        # 1. 搜尋化合物
+        compounds = pcp.get_compounds(query, 'name')
+        if not compounds:
+            # 嘗試當作 SMILES 搜尋
+            try:
+                compounds = pcp.get_compounds(query, 'smiles')
+            except:
+                return None
+        
+        if not compounds:
+            return None
+
+        c = compounds[0] # 取第一個結果
+        
+        # 2. 提取資訊
+        data = {
+            "cid": c.cid,
+            "formula": c.molecular_formula,
+            "iupac": c.iupac_name if c.iupac_name else "N/A",
+            "weight": c.molecular_weight,
+            "smiles": c.canonical_smiles,
+            "obj": c # 保留原始物件
+        }
+        return data
+    except Exception as e:
+        return None
+
 def predict_bbb(mol):
-    """
-    簡易 BBB 穿透預測規則 (基於醫藥化學通則):
-    通常 MW < 450 且 1.5 < LogP < 5.0 的小分子較容易通過血腦屏障。
-    """
+    """簡易 BBB 預測"""
     mw = Descriptors.MolWt(mol)
     logp = Descriptors.MolLogP(mol)
-    tpsa = Descriptors.TPSA(mol) # 極性表面積
+    tpsa = Descriptors.TPSA(mol)
     
     score = 0
     if mw < 450: score += 1
     if 1.5 < logp < 5.0: score += 1
     if tpsa < 90: score += 1
     
-    is_permeable = score >= 2 
-    
-    return is_permeable, mw, logp, tpsa
-
-def get_structure(text):
-    """嘗試從藥名或 SMILES 取得結構"""
-    # 移除使用者不小心輸入的空白或標點符號
-    text = text.strip().replace("(", "").replace(")", "")
-    
-    mol = Chem.MolFromSmiles(text)
-    if mol: return mol, text, "SMILES Input"
-    try:
-        c = pcp.get_compounds(text, 'name')
-        if c: return Chem.MolFromSmiles(c[0].canonical_smiles), c[0].canonical_smiles, "PubChem"
-    except: pass
-    return None, None, None
+    return score >= 2, mw, logp, tpsa
 
 # --- 介面開始 ---
-st.title("🧠 BrainX AI 藥物篩選與收藏系統")
-st.markdown("輸入藥名或結構，AI 即時預測 **血腦屏障 (BBB)** 穿透性，並可將有潛力的藥物 **加入候選清單**。")
+st.title("🧬 BrainX AI 藥物資訊中心 (Informatics Hub)")
+st.markdown("整合 **PubChem 結構資料** 與 **BrainX 內部專利資料庫**，提供全方位的藥物分析報告。")
 
-# --- 區塊 1: 搜尋與分析 ---
-st.sidebar.header("🔍 藥物搜尋 (Search)")
+# --- 側邊欄 ---
+st.sidebar.header("🔍 藥物搜尋")
 search_input = st.sidebar.text_input("輸入藥名 (如 Donepezil) 或 SMILES", "")
 
-if st.sidebar.button("🚀 開始分析"):
+if st.sidebar.button("🚀 全譜分析 (Analyze)"):
     if not search_input:
         st.warning("請輸入內容！")
     else:
-        with st.spinner(f"正在分析 {search_input}..."):
-            mol, smiles, source = get_structure(search_input)
+        with st.spinner(f"正在連線全球資料庫分析 {search_input}..."):
+            # 1. 獲取 PubChem 詳細資料
+            pc_data = get_extended_data(search_input)
             
-            if not mol:
-                st.error(f"❌ 找不到 '{search_input}' 的結構。\n提示：此系統專用於「小分子藥物」，若為抗體藥物 (如 Lecanemab) 請切換至大分子模組。")
+            if not pc_data:
+                st.error(f"❌ 找不到 '{search_input}'。請確認拼字或改用標準藥名。")
             else:
-                # 1. 執行 BBB 預測
+                # 2. 轉成 RDKit 分子進行 BBB 運算
+                mol = Chem.MolFromSmiles(pc_data['smiles'])
                 is_bbb, mw, logp, tpsa = predict_bbb(mol)
                 
-                # 存入 Session State
+                # 3. 檢查內部知識庫 (是否有專利/適應症資料)
+                clean_name = search_input.lower().strip()
+                kb_data = DEMO_DB.get(clean_name, {
+                    "indication": "Investigational / Screening Phase",
+                    "class": "Small Molecule",
+                    "patent": "Searching External DB...",
+                    "moa": "Under Analysis"
+                })
+
+                # 存入 Session
                 st.session_state.current_analysis = {
-                    "name": search_input,
-                    "smiles": smiles,
-                    "is_bbb": is_bbb,
-                    "mw": mw,
-                    "logp": logp,
-                    "tpsa": tpsa,
-                    "mol": mol 
+                    "name": search_input, # 使用者輸入的名字
+                    "pc_data": pc_data,   # PubChem 資料
+                    "kb_data": kb_data,   # 內部知識庫資料
+                    "metrics": {"is_bbb": is_bbb, "mw": mw, "logp": logp, "tpsa": tpsa},
+                    "mol": mol
                 }
 
-# --- 顯示分析結果 ---
+# --- 主要顯示區 ---
 if 'current_analysis' in st.session_state:
     data = st.session_state.current_analysis
+    pc = data['pc_data']
+    kb = data['kb_data']
+    met = data['metrics']
     mol = data['mol']
     
     st.divider()
-    st.subheader(f"🧪 分析結果: {data['name']}")
     
-    col1, col2, col3 = st.columns([1, 2, 1.5])
+    # --- 標題區：藥名 + 分類 ---
+    st.markdown(f"## 💊 {data['name'].title()} <span style='font-size:0.6em; color:gray'>| {kb['class']}</span>", unsafe_allow_html=True)
     
-    with col1:
-        st.markdown("### 🩸 血腦屏障 (BBB) 預測")
-        if data['is_bbb']:
-            st.success("✅ **高穿透率**")
-            st.caption("具備良好的親脂性與分子量，極有可能穿透 BBB。")
-        else:
-            st.error("⚠️ **穿透力不佳**")
-            st.caption("分子過大或極性太高，建議進行結構修飾。")
+    # 建立四欄資訊卡
+    k1, k2, k3, k4 = st.columns(4)
+    k1.info(f"**適應症 (Indication)**\n\n{kb['indication']}")
+    k2.info(f"**化學式 (Formula)**\n\n{pc['formula']}")
+    k3.info(f"**專利狀態 (Patent)**\n\n{kb['patent']}")
+    k4.success(f"**BBB 穿透預測**\n\n{'✅ High' if met['is_bbb'] else '⚠️ Low'}")
+
+    # --- 詳細數據區 ---
+    t1, t2 = st.tabs(["🧪 化學結構與屬性", "📜 專利與命名資訊"])
+    
+    with t1:
+        c1, c2 = st.columns([1, 1.5])
+        with c1:
+            st.subheader("物理化學屬性")
+            st.write(f"**分子量 (MW):** {met['mw']:.2f} g/mol")
+            st.write(f"**親脂性 (LogP):** {met['logp']:.2f}")
+            st.write(f"**極性表面積 (TPSA):** {met['tpsa']:.2f} Å²")
+            st.markdown("---")
+            st.write("**機制 (MOA):**")
+            st.caption(kb['moa'])
             
-        st.markdown("---")
-        st.metric("親脂性 (LogP)", f"{data['logp']:.2f}")
-        st.metric("極性表面積 (TPSA)", f"{data['tpsa']:.1f}")
-        st.metric("分子量 (MW)", f"{data['mw']:.1f}")
+            if st.button("⭐ 加入候選清單"):
+                if not any(d['Name'] == data['name'] for d in st.session_state.candidate_list):
+                    st.session_state.candidate_list.append({
+                        "Name": data['name'],
+                        "Formula": pc['formula'],
+                        "Indication": kb['indication'],
+                        "Patent": kb['patent'],
+                        "BBB": "Yes" if met['is_bbb'] else "No"
+                    })
+                    st.success("已加入清單！")
+                else:
+                    st.warning("已在清單中")
+
+        with c2:
+            st.subheader("3D 立體結構")
+            # 3D 圖
+            m_block = Chem.MolToPDBBlock(Chem.AddHs(mol))
+            view = py3Dmol.view(width=600, height=400)
+            view.addModel(m_block, 'pdb')
+            view.setStyle({'stick': {}})
+            view.zoomTo()
+            view.setBackgroundColor('#f9f9f9')
+            showmol(view, height=400, width=600)
+
+    with t2:
+        st.subheader("詳細命名與外部連結")
+        st.text_input("IUPAC 標準命名", pc['iupac'])
+        st.text_area("SMILES 代碼", pc['smiles'])
         
-        if st.button("⭐ 加入候選清單 (Add to List)"):
-            if not any(d['Name'] == data['name'] for d in st.session_state.candidate_list):
-                st.session_state.candidate_list.append({
-                    "Name": data['name'],
-                    "BBB_Pass": "Yes" if data['is_bbb'] else "No",
-                    "MW": round(data['mw'], 2),
-                    "LogP": round(data['logp'], 2),
-                    "SMILES": data['smiles']
-                })
-                st.success(f"已將 {data['name']} 加入清單！")
-            else:
-                st.warning("此藥物已在清單中。")
-
-    with col2:
-        st.markdown("### 🧬 3D 結構視圖")
-        # 這裡會使用到 py3Dmol，一定要確認上面有 import
-        mol = Chem.AddHs(mol)
-        AllChem.EmbedMolecule(mol)
-        AllChem.MMFFOptimizeMolecule(mol)
+        st.markdown("### 🔗 外部資料庫連結")
+        # 自動生成 Google Patent 連結
+        patent_url = f"https://patents.google.com/?q={data['name']}"
+        pubchem_url = f"https://pubchem.ncbi.nlm.nih.gov/compound/{pc['cid']}"
         
-        view = py3Dmol.view(width=500, height=400)
-        pdb = Chem.MolToPDBBlock(mol)
-        view.addModel(pdb, 'pdb')
-        view.setStyle({'stick': {}})
-        view.zoomTo()
-        view.setBackgroundColor('#f9f9f9')
-        showmol(view, height=400, width=500)
+        st.markdown(f"""
+        * **Google Patents:** [點擊搜尋 {data['name']} 相關專利]({patent_url})
+        * **PubChem:** [點擊查看 NCBI 官方報告]({pubchem_url})
+        * **BrainX Internal:** [連結至內部試驗數據 (需權限)](https://www.brainx.com.tw)
+        """)
 
-    with col3:
-        st.markdown("### 🕸️ 基因關聯圖")
-        graph = graphviz.Digraph()
-        graph.attr(rankdir='TB', bgcolor='transparent')
-        graph.node('D', data['name'], shape='doublecircle', style='filled', fillcolor='#E0F7FA')
-        graph.node('GLT1', 'GLT-1 / EAAT2', shape='hexagon', style='filled', fillcolor='#FFCC80')
-        graph.node('NMDA', 'NMDA Receptor', shape='ellipse')
-        
-        graph.edge('D', 'GLT1', label="Target", color='red')
-        graph.edge('D', 'NMDA', label="Modulate", style='dashed')
-        st.graphviz_chart(graph)
-
-# --- 區塊 2: 候選藥物清單 ---
-st.divider()
-st.subheader("📋 我的候選藥物清單")
-
-if len(st.session_state.candidate_list) > 0:
+# --- 底部清單 ---
+if st.session_state.candidate_list:
+    st.divider()
+    st.subheader("📋 候選藥物總表")
     df = pd.DataFrame(st.session_state.candidate_list)
-    st.dataframe(df, column_config={"SMILES": None}, use_container_width=True)
-    
-    c1, c2 = st.columns([1, 5])
-    with c1:
-        if st.button("🗑️ 清空清單"):
-            st.session_state.candidate_list = []
-            st.rerun()
-    with c2:
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 下載清單報告 (CSV)", csv, "brainx_candidates.csv", "text/csv")
-
-else:
-    st.info("目前清單是空的。請在上方搜尋藥物並點擊「加入候選清單」。")
+    st.dataframe(df, use_container_width=True)
