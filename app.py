@@ -182,10 +182,20 @@ if 'current_analysis' in st.session_state:
                 else:
                     st.warning("已在清單中")
 
-        with c2:
+    with c2:
             st.subheader("3D 立體結構")
-            # 3D 圖
-            m_block = Chem.MolToPDBBlock(Chem.AddHs(mol))
+            # --- 關鍵修正開始：補回 3D 運算步驟 ---
+            # 1. 幫分子加上氫原子 (Add Hydrogens)
+            mol_3d = Chem.AddHs(mol)
+            # 2. 最重要的一步：計算原子在 3D 空間的座標 (Embed)
+            AllChem.EmbedMolecule(mol_3d)
+            # 3. 進行能量優化，讓結構更自然 (Optimize)
+            AllChem.MMFFOptimizeMolecule(mol_3d)
+            # --- 關鍵修正結束 ---
+
+            # 將計算好的 3D 結構轉成 PDB 格式給繪圖引擎
+            m_block = Chem.MolToPDBBlock(mol_3d)
+
             view = py3Dmol.view(width=600, height=400)
             view.addModel(m_block, 'pdb')
             view.setStyle({'stick': {}})
