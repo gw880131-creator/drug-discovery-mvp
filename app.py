@@ -12,7 +12,7 @@ import hashlib
 # --- 1. 網頁設定 ---
 st.set_page_config(page_title="BrainX Drug Discovery Pro", page_icon="🧪", layout="wide")
 
-# --- 2. 深度藥理知識庫 (含優化建議) ---
+# --- 2. 深度藥理知識庫 ---
 DEMO_DB = {
     "donepezil": {
         "status": "FDA Approved (1996)",
@@ -65,11 +65,10 @@ def get_pubchem_data(query):
     except: return None, None
     return None, None
 
-# --- 安全的 3D 生成函式 ---
 def generate_3d_block(mol):
     """嘗試生成 3D 結構，防止 Bad Conformer Id"""
     try:
-        mol_3d = Chem.AddHs(mol) # 加氫
+        mol_3d = Chem.AddHs(mol)
         res = AllChem.EmbedMolecule(mol_3d, AllChem.ETKDG())
         if res == -1:
             res = AllChem.EmbedMolecule(mol_3d, useRandomCoords=True)
@@ -110,14 +109,13 @@ try:
                     "opt_smiles": data['smiles']
                 })
 
-                # 這裡稍微修改 key 以確保強制刷新視圖
-                st.session_state.res_v6_labeled = {
+                st.session_state.res_v6_fixed = {
                     "data": data, "m": {"mpo": mpo, "mw": mw, "logp": logp, "tpsa": tpsa},
                     "info": info, "mol": mol
                 }
 
-    if 'res_v6_labeled' in st.session_state:
-        res = st.session_state.res_v6_labeled
+    if 'res_v6_fixed' in st.session_state:
+        res = st.session_state.res_v6_fixed
         d = res['data']
         m = res['m']
         i = res['info']
@@ -133,7 +131,6 @@ try:
             st.subheader("1️⃣ CNS MPO 評分 (Pfizer Algorithm)")
             st.progress(m['mpo']/6.0)
             st.write(f"**Score:** `{m['mpo']:.2f} / 6.0`")
-            st.caption("Reference: *Wager et al., ACS Chem. Neurosci. 2010*")
         with c2:
             st.metric("LogP", f"{m['logp']:.2f}")
             st.metric("MW", f"{m['mw']:.0f}")
@@ -154,63 +151,64 @@ try:
             st.plotly_chart(fig, use_container_width=True)
             
         with r2:
-            st.info("📚 **數據來源與模型依據：**")
-            st.markdown("""
-            * **訓練資料集:** Tox21 (NIH), ChEMBL
-            * **演算法:** GCN / ProTox-II
-            * **可信度:** 85% (In-silico Validation)
-            """)
+            st.info("📚 **數據來源：** Tox21 (NIH), ChEMBL")
 
         st.divider()
 
-        # --- 3. AI 結構優化建議 (含原子標籤) ---
+        # --- 3. AI 結構優化建議 (原子標籤修復版) ---
         st.subheader("3️⃣ AI 結構優化建議 (Scaffold Hopping)")
-        st.markdown("基於 **Matched Molecular Pair Analysis (MMPA)** 演算法，AI 建議以下修飾以提升藥物性質：")
+        st.markdown("基於 **MMPA** 演算法，AI 建議以下修飾：")
         
         o1, o2 = st.columns(2)
         with o1:
             st.error("📉 **原始結構 (Original)**")
             pdb_block_orig = generate_3d_block(mol)
             if pdb_block_orig:
-                v1 = py3Dmol.view(width=400, height=250)
+                v1 = py3Dmol.view(width=400, height=300)
                 v1.addModel(pdb_block_orig, 'pdb')
                 v1.setStyle({'stick': {}})
                 
-                # --- [新增] 加入原子標籤 ---
-                v1.addPropertyLabels("symbol", {}, {
-                    "fontColor": "black", "backgroundColor": "#eeeeee", "fontSize": 10, "showBackground": True, "backgroundOpacity": 0.8
+                # --- 關鍵修正：將 'symbol' 改為 'elem'，並調整樣式 ---
+                v1.addPropertyLabels("elem", {}, {
+                    "fontColor": "black", 
+                    "font": "sans-serif", 
+                    "fontSize": 14, 
+                    "showBackground": False, # 去掉背景框，直接顯示文字比較乾淨
+                    "alignment": "center"
                 })
-                # -------------------------
+                # ------------------------------------------------
                 
                 v1.zoomTo()
-                showmol(v1, height=250, width=400)
+                showmol(v1, height=300, width=400)
             else:
-                st.warning("⚠️ 結構無法生成 3D 預覽")
+                st.warning("⚠️ 結構無法生成")
             
         with o2:
             st.success(f"📈 **AI 優化建議: {i['opt_suggestion']}**")
             st.write(f"**優化原理:** {i['opt_reason']}")
-            st.write(f"**預期效益:** {i['opt_benefit']}")
             
             if i.get('opt_smiles'):
                 mol_opt = Chem.MolFromSmiles(i['opt_smiles'])
                 if mol_opt:
                     pdb_block_opt = generate_3d_block(mol_opt)
                     if pdb_block_opt:
-                        v2 = py3Dmol.view(width=400, height=250)
+                        v2 = py3Dmol.view(width=400, height=300)
                         v2.addModel(pdb_block_opt, 'pdb')
                         v2.setStyle({'stick': {'colorscheme': 'greenCarbon'}})
                         
-                        # --- [新增] 加入原子標籤 (綠色背景) ---
-                        v2.addPropertyLabels("symbol", {}, {
-                            "fontColor": "black", "backgroundColor": "#d4edda", "fontSize": 10, "showBackground": True, "backgroundOpacity": 0.8
+                        # --- 關鍵修正：將 'symbol' 改為 'elem' ---
+                        v2.addPropertyLabels("elem", {}, {
+                            "fontColor": "#006400", # 深綠色字體
+                            "font": "sans-serif",
+                            "fontSize": 14,
+                            "showBackground": False
                         })
-                        # -----------------------------------
+                        # -------------------------------------
                         
                         v2.zoomTo()
-                        showmol(v2, height=250, width=400)
+                        showmol(v2, height=300, width=400)
                     else:
-                        st.warning("⚠️ 優化結構 3D 生成失敗")
+                        st.warning("⚠️ 優化結構無法生成")
 
         if st.button("⭐ 採納 AI 建議並加入清單"):
             st.session_state.candidate_list.append({
