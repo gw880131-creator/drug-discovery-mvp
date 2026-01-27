@@ -31,16 +31,14 @@ TRANSFORMATIONS = {
     ]
 }
 
-# --- 3. [核心] 深度藥理知識庫 (Demo用精修文案 - 恢復詳細欄位) ---
+# --- 3. [核心] 深度藥理知識庫 (Demo用精修文案) ---
 DEMO_DB = {
     "donepezil": {
         "moa_detail": "Donepezil 是一種可逆的乙醯膽鹼酯酶 (AChE) 抑制劑。它能增加神經遞質乙醯膽鹼在突觸間隙的濃度。",
-        # 心臟毒性詳解
         "tox_herg_risk": "Moderate",
         "tox_herg_desc": "迷走神經張力增加可能導致心搏過緩 (Bradycardia) 或心臟傳導阻滯。",
         "tox_herg_pop": "病竇症候群 (SSS) 或房室傳導阻滯患者。",
         "tox_herg_ref": "[FDA Label: Aricept Section 5.2](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=6425e793-1353-46bc-92d1-417b1207e602)",
-        # 肝臟毒性詳解
         "tox_liver_risk": "Low",
         "tox_liver_desc": "在大型臨床試驗中，血清酶升高率與安慰劑組無異 (<2%)，具備良好的肝臟安全性。",
         "tox_liver_pop": "一般人群安全，極罕見特異性肝損傷。",
@@ -48,12 +46,10 @@ DEMO_DB = {
     },
     "memantine": {
         "moa_detail": "Memantine 是一種電壓依賴性、中等親和力的非競爭性 NMDA 受體拮抗劑。",
-        # 心臟毒性詳解
         "tox_herg_risk": "Low",
         "tox_herg_desc": "IC50 > 100 µM，對 hERG 鉀離子通道無顯著抑制作用，心血管風險極低。",
         "tox_herg_pop": "心血管安全性良好。",
         "tox_herg_ref": "[Parsons et al. Neuropharmacology 1999](https://pubmed.ncbi.nlm.nih.gov/10462127/)",
-        # 肝臟毒性詳解
         "tox_liver_risk": "Low",
         "tox_liver_desc": "藥物主要以原形經腎臟排泄，極少發生肝臟代謝相關毒性。",
         "tox_liver_pop": "腎功能不全者需減量 (CrCl < 30 mL/min)。",
@@ -142,11 +138,9 @@ def apply_smart_transformation(mol, metrics):
     return mol, "Stereoisomer Optimization", "優化手性中心以提升親和力。", "Nature Reviews", "結構極簡，建議微調立體化學。"
 
 def generate_ai_report_fallback(name, metrics):
-    """未知藥物的詳細 AI 預測報告 (恢復詳細欄位)"""
     safe_name = urllib.parse.quote(name)
     h = int(hashlib.sha256(name.encode()).hexdigest(), 16)
     
-    # 肝毒性預測
     if metrics['wlogp'] > 4.0:
         liver_risk = "Moderate"
         liver_desc = f"高親脂性 (LogP={metrics['wlogp']:.1f}) 可能導致肝代謝負擔增加。"
@@ -156,7 +150,6 @@ def generate_ai_report_fallback(name, metrics):
         liver_desc = "理化性質符合 Ro5 規則，預測無顯著肝毒性。"
         liver_pop = "無特殊監測需求。"
 
-    # hERG 預測
     herg_risk = "Low" if (h % 10) < 7 else "Moderate"
     herg_desc = "未偵測到顯著藥效團。" if herg_risk == "Low" else "結構含有潛在鉀離子通道結合位點。"
     herg_pop = "一般人群安全。" if herg_risk == "Low" else "需監測心律不整高風險族群。"
@@ -166,7 +159,6 @@ def generate_ai_report_fallback(name, metrics):
         "tox_herg_risk": herg_risk, "tox_herg_desc": herg_desc,
         "tox_herg_pop": herg_pop,
         "tox_herg_ref": f"[AI Confidence: 87% | Search PubMed]({f'https://pubmed.ncbi.nlm.nih.gov/?term={safe_name}+hERG'})",
-        
         "tox_liver_risk": liver_risk, "tox_liver_desc": liver_desc,
         "tox_liver_pop": liver_pop,
         "tox_liver_ref": f"[AI Confidence: 82% | Search PubMed]({f'https://pubmed.ncbi.nlm.nih.gov/?term={safe_name}+hepatotoxicity'})"
@@ -197,7 +189,7 @@ def generate_3d_block(mol):
 try:
     if 'candidate_list' not in st.session_state: st.session_state.candidate_list = []
 
-    st.title("🧬 BrainX: Enterprise Edition (V21.0)")
+    st.title("🧬 BrainX: Enterprise Edition (V22.0)")
     st.markdown("整合 **ChEMBL 真實靶點**、**BOILED-Egg 科學運算** 與 **FDA 實證毒理**。")
 
     with st.sidebar:
@@ -215,32 +207,30 @@ try:
                 metrics = calculate_metrics(mol, data['name'])
                 new_mol, opt_name, opt_desc, opt_ref, opt_reason = apply_smart_transformation(mol, metrics)
                 
-                # API Calls
                 chembl = fetch_chembl_targets(data['smiles'])
                 fda = fetch_fda_label(data['name'])
                 
-                # 混合資料邏輯 (Demo DB + Real Data)
                 clean_name = search_input.lower().strip()
                 if clean_name in DEMO_DB:
                     info = DEMO_DB[clean_name]
                 else:
                     info = generate_ai_report_fallback(data['name'], metrics)
 
-                st.session_state.res_v21 = {
+                st.session_state.res_v22 = {
                     "data": data, "m": metrics, "mol": mol, 
                     "opt": {"mol": new_mol, "name": opt_name, "desc": opt_desc, "ref": opt_ref, "reason": opt_reason},
                     "fda": fda, "chembl": chembl, "info": info
                 }
 
-    if 'res_v21' in st.session_state:
-        res = st.session_state.res_v21
+    if 'res_v22' in st.session_state:
+        res = st.session_state.res_v22
         d = res['data']
         m = res['m']
         mol = res['mol']
         opt = res['opt']
         fda = res['fda']
         chembl = res['chembl']
-        i = res['info'] # 這是包含詳細毒理欄位的字典
+        i = res['info']
         
         st.header(f"💊 {d['name'].title()}")
 
@@ -265,6 +255,7 @@ try:
             if m['in_egg']: st.success("✅ **命中蛋黃區 (Brain)**")
             else: st.warning("⚠️ **落入蛋白區/外圍**")
 
+        # [核心修復] 五大指標全部回歸
         with st.expander("📖 點擊查看：五大指標科學原理詳解 (Scientific Rationale)", expanded=True):
             st.markdown("""
             | 指標 (Metric) | 理想範圍 | 科學原理 (Scientific Rationale) |
@@ -272,11 +263,14 @@ try:
             | **TPSA** (極性表面積) | < 79 Å² | **反映去溶劑化能 (Desolvation Energy)。** TPSA 過高代表能障過大，難以入腦。 |
             | **LogP** (親脂性) | 0.4 - 6.0 | **決定磷脂雙分子層的親和力。** 需具備適當脂溶性以穿透細胞膜。 |
             | **MW** (分子量) | < 360 Da | **空間障礙 (Steric Hindrance)。** 分子量越小，擴散係數越高。 |
+            | **HBD** (氫鍵給體) | < 1 | **水合層 (Solvation Shell) 效應。** HBD 易與水形成強鍵結，阻礙穿透。 |
+            | **pKa** (酸鹼度) | 7.5 - 8.5 | **離子化狀態 (Ionization State)。** 只有未帶電的中性分子能有效藉由被動擴散通過。 |
+            *Ref: Daina & Zoete, ChemMedChem 2016; Wager et al., ACS Chem. Neurosci. 2010.*
             """)
 
         st.divider()
 
-        # --- 2. 藥物標靶 (ChEMBL) ---
+        # --- 2. 藥物標靶 ---
         st.subheader("2️⃣ 藥物標靶與活性數據 (Source: EBI ChEMBL)")
         if chembl['found']:
             st.success(f"✅ **連線成功** (ChEMBL ID: {chembl['id']})")
@@ -312,54 +306,33 @@ try:
 
         st.divider()
 
-        # --- 4. 作用機轉與毒理詳解 (原排版回歸) ---
+        # --- 4. 毒理詳解 ---
         st.subheader("4️⃣ 作用機轉與毒理機制 (Toxicology & Mechanism)")
         
-        # 作用機轉
-        moa_text = i.get('moa_detail', fda.get('mechanism', '未偵測到詳細機轉，建議參考 ChEMBL 靶點資訊。'))
+        moa_text = i.get('moa_detail', fda.get('mechanism', '未偵測到詳細機轉。'))
         with st.expander("🧬 **作用機轉 (Mechanism of Action)**", expanded=True):
             st.write(moa_text)
             if fda['found']: st.caption("Source: Hybrid (BrainX Knowledge Graph + FDA Label)")
 
-        # [核心恢復] 詳細毒理報告卡 (兩欄並排)
         col_herg, col_liver = st.columns(2)
-        
-        # 心臟毒性卡片
         with col_herg:
-            with st.expander("🫀 心臟毒性 (hERG Inhibition)", expanded=True):
-                if i['tox_herg_risk'] in ["Moderate", "High"]:
-                    st.warning(f"**風險等級:** {i['tox_herg_risk']}")
-                else:
-                    st.success(f"**風險等級:** {i['tox_herg_risk']}")
-                
-                st.write(f"**毒性機制:** {i['tox_herg_desc']}")
-                st.write(f"**高危族群:** {i['tox_herg_pop']}")
-                st.markdown(f"📚 **出處:** {i['tox_herg_ref']}") # 這裡有連結
-
-        # 肝臟毒性卡片
+            with st.expander("🫀 心臟毒性 (hERG)", expanded=True):
+                if i['tox_herg_risk'] in ["Moderate", "High"]: st.warning(f"**風險:** {i['tox_herg_risk']}")
+                else: st.success(f"**風險:** {i['tox_herg_risk']}")
+                st.write(f"**機制:** {i['tox_herg_desc']}")
+                st.write(f"**族群:** {i['tox_herg_pop']}")
+                st.markdown(f"📚 **出處:** {i['tox_herg_ref']}")
         with col_liver:
-            with st.expander("🧪 肝臟毒性 (Hepatotoxicity)", expanded=True):
-                if i['tox_liver_risk'] in ["Moderate", "High"]:
-                    st.warning(f"**風險等級:** {i['tox_liver_risk']}")
-                else:
-                    st.success(f"**風險等級:** {i['tox_liver_risk']}")
-                    
-                st.write(f"**毒性機制:** {i['tox_liver_desc']}")
-                st.write(f"**監測建議:** {i['tox_liver_pop']}")
-                st.markdown(f"📚 **出處:** {i['tox_liver_ref']}") # 這裡有連結
+            with st.expander("🧪 肝臟毒性 (Liver)", expanded=True):
+                if i['tox_liver_risk'] in ["Moderate", "High"]: st.warning(f"**風險:** {i['tox_liver_risk']}")
+                else: st.success(f"**風險:** {i['tox_liver_risk']}")
+                st.write(f"**機制:** {i['tox_liver_desc']}")
+                st.write(f"**建議:** {i['tox_liver_pop']}")
+                st.markdown(f"📚 **出處:** {i['tox_liver_ref']}")
 
-        # 底部連結
         safe_name = urllib.parse.quote(d['name'])
         dailymed_link = f"https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query={safe_name}"
-        st.markdown(f"""
-        <div style="text-align: center; margin-top: 20px;">
-            <a href="{dailymed_link}" target="_blank">
-                <button style="background-color:#003366; color:white; padding:10px 20px; border:none; border-radius:5px; cursor:pointer;">
-                    🏛️ 前往 DailyMed 查看完整 FDA 標籤 (Official PDF)
-                </button>
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div style="text-align: center; margin-top: 20px;"><a href="{dailymed_link}" target="_blank"><button style="background-color:#003366; color:white; padding:10px 20px; border:none; border-radius:5px; cursor:pointer;">🏛️ 前往 DailyMed 查看完整 FDA 標籤</button></a></div>""", unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"Error: {e}")
