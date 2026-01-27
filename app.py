@@ -124,7 +124,7 @@ try:
     with st.sidebar:
         st.header("🔍 藥物搜尋")
         search_input = st.text_input("輸入藥名 (如 Donepezil)", "")
-        run_btn = st.button("🚀 啟動科學運算")
+        run_btn = st.button("運算")
 
     if run_btn and search_input:
         with st.spinner(f"正在檢索 PubMed 與 FDA 資料庫：{search_input}..."):
