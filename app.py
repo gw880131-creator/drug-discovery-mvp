@@ -263,29 +263,74 @@ try:
 
         st.divider()
 
-        # --- Tab 2: 結構優化 ---
+        # --- Tab 2: 結構優化 (Reaction SMARTS) ---
         st.subheader("2️⃣ AI 結構優化建議 (Reaction SMARTS)")
+        
+        # 保持原本的左右兩欄設計 (Layout 不變)
         c1, c2 = st.columns(2)
+        
         with c1:
-            st.info("📉 **原始結構**")
+            st.info("📉 **原始結構 (Original)**")
             v1 = py3Dmol.view(width=400, height=300)
             v1.addModel(generate_3d_block(mol), 'pdb')
             v1.setStyle({'stick': {}})
             v1.zoomTo()
             showmol(v1, height=300, width=400)
+            
         with c2:
             if opt['mol']:
+                # 這裡顯示簡短結論，保持版面清爽
                 st.success(f"📈 **AI 建議策略: {opt['name']}**")
                 st.write(f"**原理:** {opt['desc']}")
                 st.caption(f"📚 Ref: {opt['ref']}")
+                
                 v2 = py3Dmol.view(width=400, height=300)
                 v2.addModel(generate_3d_block(opt['mol']), 'pdb')
                 v2.setStyle({'stick': {'colorscheme': 'greenCarbon'}})
                 v2.zoomTo()
                 showmol(v2, height=300, width=400)
+                
+                # 顯示優化後的 SMILES 字串
+                st.code(Chem.MolToSmiles(opt['mol']), language='text')
+
             else:
                 st.warning("⚠️ **結構穩定，無須修飾**")
-                st.write("AI 未發現適合進行 Bioisosteric Replacement 的位點。")
+                st.write("AI 演算法掃描後，未發現適合進行 Bioisosteric Replacement 的位點。")
+
+        # --- [新增] 技術白皮書折疊區塊 (放在兩欄下方，不破壞版面) ---
+        st.markdown("---")
+        with st.expander("📖 技術白皮書：AI 運算核心與科學原理詳解 (Technical Deep Dive)", expanded=False):
+            st.markdown("""
+            ### 🧬 AI 運算核心：Scaffold Hopping (骨架躍遷) 原理解析
+            
+            當系統建議進行結構修飾（如 **Scaffold Hop** 或 **Fluorination**）時，後端演算法實際上執行了以下三個精密的化學資訊學運算步驟：
+
+            #### 1. 結構識別 (Structure Recognition)
+            AI 採用 **SMARTS (SMiles ARbitrary Target Specification)** 語言進行圖形識別。
+            * **運作邏輯：** 系統掃描藥物分子圖 (Molecular Graph)，尋找是否存在特定的子結構 (Subgraph)。
+            * **範例：** 偵測苯環指令 `[c:1]1[c:2][c:3][c:4][c:5][c:6]1`。
+
+            #### 2. 虛擬反應模擬 (In-Silico Reaction)
+            AI 呼叫 **RDKit 化學反應引擎**，執行原子級別的替換與重組。
+            * **反應方程式 (Reaction SMARTS)：** 例如將苯環替換為吡啶：
+              $$[c:1]ccccc[c:6] \\gg [c:1]ccncc[c:6]$$
+            * **關鍵技術：** 程式會保留原本接在環上的所有側鏈 (R-groups) 和立體化學特徵 (Stereochemistry)，確保新生成的分子幾何結構合理。
+
+            #### 3. 屬性重算 (Property Recalculation)
+            結構改變後，AI 依據 **原子貢獻法 (Atomic Contribution Method)** 重新計算 LogP 與 TPSA。
+            * **原理：** LogP 的總數值等於分子中每個原子貢獻值的總和 (Wildman-Crippen Method)。
+            * **數據實證：** 將苯環 (親油) 替換為吡啶 (含氮/親水) 後，由於氮原子孤對電子的貢獻，LogP 通常會下降 0.5~1.0，顯著改善水溶性。
+
+            ---
+            ### 🧪 科學原理 (Scientific Rationale)
+            **為什麼要進行這些修飾？ (Based on Bioisosterism)**
+
+            1.  **降低脂溶性 (Lower LogP)：** 引入雜環 (Heterocycle) 或極性基團能與水分子形成氫鍵，減少藥物在肝臟的非特異性結合 (Non-specific binding)。
+            2.  **改善代謝穩定性 (Metabolic Stability)：** 苯環易被 CYP450 氧化。引入氟原子 (F) 或氮原子 (N) 可改變電子密度，阻擋代謝酵素攻擊，延長半衰期 (T1/2)。
+            3.  **維持藥效 (Maintain Potency)：** 生物電子等排體 (Bioisostere) 的大小與形狀相似，確保藥物仍能精確結合標靶蛋白質口袋 (Binding Pocket)。
+
+            > **📚 核心文獻：** *Bioorg. Med. Chem.* **2013**, *21*, 2843; *J. Med. Chem.* **2008**, *51*, 4359.
+            """)
 
         st.divider()
         
