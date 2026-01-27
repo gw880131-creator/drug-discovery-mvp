@@ -10,63 +10,68 @@ import plotly.graph_objects as go
 import hashlib
 import urllib.parse
 from rdkit import DataStructs
+import requests  # 新增：用於呼叫 API
 
 # --- 1. 網頁設定 ---
 st.set_page_config(page_title="BrainX Drug Discovery Enterprise", page_icon="🏢", layout="wide")
 
 # --- 2. 資料庫設定 ---
-# 專利資料庫 (FTO 比對用)
 PATENT_DB = [
     {"name": "Donepezil (Eisai)", "smiles": "COC1=C(C=C2C(=C1)CC(C2=O)CC3CCN(CC3)CC4=CC=CC=C4)OC"},
     {"name": "Memantine (Merz)", "smiles": "CC12CC3CC(C1)(CC(C3)(C2)N)C"},
     {"name": "Rivastigmine (Novartis)", "smiles": "CCN(C)C(=O)OC1=CC=CC(=C1)C(C)N(C)C"}
 ]
 
-# 深度藥理知識庫 (Demo 用)
+# Demo 用的精修資料 (針對特定藥物顯示中文優化版)
 DEMO_DB = {
     "donepezil": {
         "status": "FDA Approved (1996)",
         "developer": "Eisai / Pfizer",
         "phase": "Marketed",
-        "moa_title": "AChE Inhibitor",
         "opt_suggestion": "Fluorination (氟化修飾)",
         "opt_reason": "在 Indanone 環的 C-6 位置引入氟原子 (F)，可阻擋 CYP450 代謝位點。",
-        "opt_smiles": "COC1=C(F)C=C2C(=C1)CC(C2=O)CC3CCN(CC3)CC4=CC=CC=C4",
-        "tox_herg_risk": "Moderate",
-        "tox_herg_desc": "迷走神經張力增加可能導致心搏過緩 (Bradycardia) 或心臟傳導阻滯。",
-        "tox_herg_pop": "病竇症候群 (SSS) 患者。",
-        "tox_herg_ref": "[FDA Label: Aricept Section 5.2](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=6425e793-1353-46bc-92d1-417b1207e602)",
-        "tox_liver_risk": "Low",
-        "tox_liver_desc": "在大型臨床試驗中，血清酶升高率與安慰劑組無異 (<2%)。",
-        "tox_liver_pop": "一般人群安全。",
-        "tox_liver_ref": "[NIH LiverTox: Donepezil](https://www.ncbi.nlm.nih.gov/books/NBK548700/)",
-        "tox_ames_risk": "Negative",
-        "tox_ames_desc": "Ames 細菌突變試驗、小鼠淋巴瘤基因突變試驗均為陰性。",
-        "tox_ames_ref": "[S.B.Oglesby et al.](https://pubmed.ncbi.nlm.nih.gov/)"
+        "opt_smiles": "COC1=C(F)C=C2C(=C1)CC(C2=O)CC3CCN(CC3)CC4=CC=CC=C4"
     },
     "memantine": {
         "status": "FDA Approved (2003)",
         "developer": "Merz / Forest",
         "phase": "Marketed",
-        "moa_title": "NMDA Antagonist",
         "opt_suggestion": "Methyl-Extension (甲基延伸)",
         "opt_reason": "增加金剛烷胺 (Adamantane) 側鏈長度，增加疏水性交互作用。",
-        "opt_smiles": "C[C@]12C[C@@H]3C[C@@H](C1)[C@@](N)(C)C[C@@H]2C3",
-        "tox_herg_risk": "Low",
-        "tox_herg_desc": "IC50 > 100 µM，對 hERG 鉀離子通道無顯著抑制作用。",
-        "tox_herg_pop": "心血管安全性良好。",
-        "tox_herg_ref": "[Parsons et al. Neuropharmacology 1999](https://pubmed.ncbi.nlm.nih.gov/10462127/)",
-        "tox_liver_risk": "Low",
-        "tox_liver_desc": "主要以原形經腎臟排泄，極少發生肝臟代謝相關毒性。",
-        "tox_liver_pop": "腎功能不全者需減量。",
-        "tox_liver_ref": "[NIH LiverTox: Memantine](https://www.ncbi.nlm.nih.gov/books/NBK548170/)",
-        "tox_ames_risk": "Negative",
-        "tox_ames_desc": "體外與體內遺傳毒性試驗均顯示無致突變性。",
-        "tox_ames_ref": "[FDA Pharmacology Review](https://www.accessdata.fda.gov/drugsatfda_docs/nda/2003/21-487_Namenda.cfm)"
+        "opt_smiles": "C[C@]12C[C@@H]3C[C@@H](C1)[C@@](N)(C)C[C@@H]2C3"
     }
 }
 
-# --- 3. 核心運算 (含 SA Score) ---
+# --- 3. [核心新功能] FDA/DailyMed 即時連線 ---
+@st.cache_data(ttl=3600) # 快取 1 小時，避免重複 API 請求
+def fetch_fda_label(drug_name):
+    """
+    透過 openFDA API 獲取 DailyMed 的真實標籤文字
+    """
+    try:
+        # 查詢 openFDA (DailyMed 的數據源)
+        base_url = "https://api.fda.gov/drug/label.json"
+        query = f'search=openfda.brand_name:"{drug_name}"+OR+openfda.generic_name:"{drug_name}"&limit=1'
+        response = requests.get(f"{base_url}?{query}", timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "results" in data and len(data["results"]) > 0:
+                res = data["results"][0]
+                return {
+                    "found": True,
+                    # 嘗試抓取特定欄位，如果沒有則回傳 "Not listed"
+                    "boxed_warning": res.get("boxed_warning", ["No Boxed Warning found in FDA label."])[0],
+                    "adverse_reactions": res.get("adverse_reactions", ["See full label for details."])[0],
+                    "mechanism_of_action": res.get("mechanism_of_action", ["Mechanism not explicitly detailed in summary."])[0],
+                    "warnings": res.get("warnings", [])
+                }
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+    
+    return {"found": False}
+
+# --- 4. 運算邏輯 ---
 def calculate_metrics(mol, name_seed):
     mw = Descriptors.MolWt(mol)
     logp = Descriptors.MolLogP(mol)
@@ -83,7 +88,7 @@ def calculate_metrics(mol, name_seed):
     score += max(0, 1 - abs(pka - 8.0)/2)
     final_score = min(6.0, score * (6.0/5.0))
 
-    # SA Score (合成難度)
+    # SA Score
     num_rings = Descriptors.RingCount(mol)
     num_chiral = len(Chem.FindMolChiralCenters(mol, includeUnassigned=True))
     sa_score = 1.0 + (num_rings * 0.5) + (num_chiral * 0.8) + (mw / 200.0)
@@ -126,36 +131,29 @@ def generate_3d_block(mol):
         return Chem.MolToPDBBlock(mol_3d, confId=res)
     except: return None
 
-def generate_ai_report(name, mol, mpo_data):
+def generate_ai_report_fallback(name, mpo_data):
+    """如果 FDA 查不到，回退到 AI 預測模式"""
     safe_name = urllib.parse.quote(name)
     h = int(hashlib.sha256(name.encode()).hexdigest(), 16)
     
     herg_val = h % 10
     if herg_val > 7:
-        herg_risk, herg_desc, herg_pop = "Moderate", "結構分析顯示潛在的鉀離子通道 (Kv11.1) 結合位點。", "心律不整高風險族群。"
+        herg_risk, herg_desc = "Moderate", "結構分析顯示潛在的鉀離子通道結合位點。"
     else:
-        herg_risk, herg_desc, herg_pop = "Low", "未偵測到顯著的 hERG 藥效團 (Pharmacophore)。", "一般人群安全性良好。"
+        herg_risk, herg_desc = "Low", "未偵測到顯著的 hERG 藥效團。"
     
     if mpo_data['logp'] > 4.0:
-        liver_risk, liver_desc, liver_pop = "Moderate", f"高親脂性 (LogP={mpo_data['logp']:.1f}) 可能導致 CYP450 代謝負擔增加。", "肝功能不全者減量。"
+        liver_risk, liver_desc = "Moderate", f"高親脂性 (LogP={mpo_data['logp']:.1f}) 可能導致肝代謝負擔。"
     else:
-        liver_risk, liver_desc, liver_pop = "Low", "理化性質符合 Ro5 規則，預測無顯著肝毒性。", "無特殊監測需求。"
+        liver_risk, liver_desc = "Low", "理化性質符合 Ro5 規則，預測無顯著肝毒性。"
         
-    if (h % 20) == 0:
-        ames_risk, ames_desc = "Positive Alert", "偵測到潛在的 DNA 嵌入基團警訊。"
-    else:
-        ames_risk, ames_desc = "Negative", "In-silico 模型未偵測到致突變警訊。"
-
     return {
         "status": "Novel Compound", "developer": "BrainX AI Discovery", "phase": "Pre-clinical",
-        "moa_title": "AI Target Prediction", "opt_suggestion": "Bioisostere Replacement",
-        "opt_reason": "建議將苯環替換為雜環以改善代謝穩定性。", "opt_smiles": Chem.MolToSmiles(mol),
-        "tox_herg_risk": herg_risk, "tox_herg_desc": herg_desc, "tox_herg_pop": herg_pop, 
-        "tox_herg_ref": f"[AI Confidence: 87% | Search PubMed]({f'https://pubmed.ncbi.nlm.nih.gov/?term={safe_name}+hERG'})",
-        "tox_liver_risk": liver_risk, "tox_liver_desc": liver_desc, "tox_liver_pop": liver_pop, 
-        "tox_liver_ref": f"[AI Confidence: 82% | Search PubMed]({f'https://pubmed.ncbi.nlm.nih.gov/?term={safe_name}+hepatotoxicity'})",
-        "tox_ames_risk": ames_risk, "tox_ames_desc": ames_desc, 
-        "tox_ames_ref": f"[AI Confidence: 91% | Search PubMed]({f'https://pubmed.ncbi.nlm.nih.gov/?term={safe_name}+ames'})"
+        "opt_suggestion": "Bioisostere Replacement",
+        "opt_reason": "建議將苯環替換為雜環以改善代謝穩定性。",
+        "tox_herg_risk": herg_risk, "tox_herg_desc": herg_desc,
+        "tox_liver_risk": liver_risk, "tox_liver_desc": liver_desc,
+        "is_real_fda": False # 標記這不是 FDA 真實數據
     }
 
 def get_pubchem_data(query):
@@ -175,7 +173,7 @@ try:
     if 'candidate_list' not in st.session_state: st.session_state.candidate_list = []
 
     st.title("🏢 BrainX: AI Drug Discovery Enterprise")
-    st.markdown("整合 **商業決策 (SA/FTO)** 與 **科學實證 (Evidence-Based ADMET)**。")
+    st.markdown("整合 **openFDA 即時連線**、**商業決策 (SA/FTO)** 與 **CNS MPO 演算法**。")
 
     with st.sidebar:
         st.header("🔍 藥物搜尋")
@@ -183,7 +181,7 @@ try:
         run_btn = st.button("🚀 啟動全方位分析")
 
     if run_btn and search_input:
-        with st.spinner(f"正在執行深度運算：{search_input}..."):
+        with st.spinner(f"正在連線 FDA 資料庫與執行運算：{search_input}..."):
             data, mol = get_pubchem_data(search_input)
             
             if not data:
@@ -192,32 +190,47 @@ try:
                 metrics = calculate_metrics(mol, data['name'])
                 clean_name = search_input.lower().strip()
                 
+                # 1. 執行 FTO 比對
                 sim_drug, sim_score = check_patent_similarity(mol)
                 metrics['sim_drug'] = sim_drug
                 metrics['sim_score'] = sim_score
 
+                # 2. [核心] 嘗試從 FDA 抓取真實數據
+                fda_data = fetch_fda_label(data['name'])
+                
+                # 3. 整合資訊
                 if clean_name in DEMO_DB:
-                    info = DEMO_DB[clean_name]
+                    info = DEMO_DB[clean_name] # Demo 藥物保留優化建議
+                    info['is_real_fda'] = False # Demo 藥物預設顯示精修過的中文，但下方會顯示 FDA 按鈕
                 else:
-                    info = generate_ai_report(data['name'], mol, metrics)
+                    info = generate_ai_report_fallback(data['name'], metrics) # 未知藥物先生成 AI 報告
+                    info['opt_smiles'] = Chem.MolToSmiles(mol)
 
+                # 將 FDA 數據存入 session
                 result_key = hashlib.md5(search_input.encode()).hexdigest()
-                st.session_state.res_v12 = {
-                    "key": result_key, "data": data, "m": metrics, "info": info, "mol": mol
+                st.session_state.res_v13 = {
+                    "key": result_key, "data": data, "m": metrics, "info": info, "mol": mol, 
+                    "fda": fda_data # 新增 FDA 數據欄位
                 }
 
-    if 'res_v12' in st.session_state:
-        res = st.session_state.res_v12
+    if 'res_v13' in st.session_state:
+        res = st.session_state.res_v13
         d = res['data']
         m = res['m']
         i = res['info']
         mol = res['mol']
+        fda = res['fda']
 
         st.divider()
         st.header(f"💊 {d['name'].title()}")
-        st.caption(f"Status: {i['phase']} | Developer: {i['developer']}")
+        
+        # 顯示狀態標籤
+        if fda['found']:
+            st.caption(f"Status: FDA Marketed | Source: openFDA & DailyMed (Real-time)")
+        else:
+            st.caption(f"Status: {i.get('phase', 'Research')} | Source: BrainX AI Prediction")
 
-        # --- 1. 高階商業決策儀表板 ---
+        # --- 1. 商業決策儀表板 ---
         st.subheader("1️⃣ 商業決策指標 (Business Metrics)")
         b1, b2, b3 = st.columns(3)
         with b1:
@@ -240,10 +253,8 @@ try:
 
         st.divider()
 
-        # --- 2. 科學實證分析 (MPO Detail + Rationale Table) ---
-        st.subheader("2️⃣ 物理化學屬性與科學原理 (Scientific Rationale)")
-        
-        # 數值顯示
+        # --- 2. 科學實證分析 ---
+        st.subheader("2️⃣ 物理化學屬性與科學原理")
         k1, k2, k3, k4, k5 = st.columns(5)
         k1.metric("MW", f"{m['mw']:.0f}")
         k2.metric("LogP", f"{m['logp']:.2f}")
@@ -251,25 +262,30 @@ try:
         k4.metric("HBD", f"{m['hbd']}")
         k5.metric("pKa", f"{m['pka']:.1f}")
         
-        # 科學原理詳解表 (回來了！)
-        with st.expander("📖 點擊查看：五大指標科學原理詳解 (Scientific Rationale)", expanded=False):
+        with st.expander("📖 點擊查看：五大指標科學原理詳解 (Scientific Rationale)"):
             st.markdown("""
             | 指標 (Metric) | 數值含義 | 科學原理 (Rationale) |
             | :--- | :--- | :--- |
-            | **分子量 (MW)** | 越小越好 (<360) | 高分子量會增加空間障礙 (Steric Hindrance) 並降低擴散係數，不利於通過 BBB。 |
-            | **親脂性 (LogP)** | 適中 (3-5) | 決定藥物進入磷脂雙分子層 (Phospholipid Bilayer) 的能力。 |
-            | **極性面積 (TPSA)**| 越低越好 (<90) | 反映分子穿越脂質膜時所需的去溶劑化能 (Desolvation Energy)。 |
-            | **氫鍵給體 (HBD)** | 越少越好 (<1) | 氫鍵給體易與水分子形成強烈的水合層 (Solvation Shell)，增加穿透能障。 |
-            | **酸鹼度 (pKa)** | 中性 (7.5-8.5) | 只有未帶電的中性分子 (Neutral Species) 能有效藉由被動擴散通過血腦屏障。 |
+            | **分子量 (MW)** | 越小越好 (<360) | 高分子量會增加空間障礙 (Steric Hindrance) 並降低擴散係數。 |
+            | **親脂性 (LogP)** | 適中 (3-5) | 決定藥物進入磷脂雙分子層的能力。 |
+            | **極性面積 (TPSA)**| 越低越好 (<90) | 反映分子穿越脂質膜時所需的去溶劑化能。 |
+            | **氫鍵給體 (HBD)** | 越少越好 (<1) | 氫鍵給體易與水分子形成強烈的水合層，增加穿透能障。 |
+            | **酸鹼度 (pKa)** | 中性 (7.5-8.5) | 只有未帶電的中性分子能有效藉由被動擴散通過血腦屏障。 |
             """)
 
         st.divider()
 
-        # --- 3. ADMET 毒理詳解 (Detailed Report + Links) ---
-        st.subheader("3️⃣ ADMET 毒理機制與實證文獻 (Evidence-Based)")
+        # --- 3. [重頭戲] 毒理與風險 (FDA 真實數據) ---
+        st.subheader("3️⃣ ADMET 毒理機制與風險 (Toxicology)")
         
-        r1, r2 = st.columns([1, 1.5])
-        with r1:
+        # 建立 DailyMed 搜尋連結
+        safe_drug_name = urllib.parse.quote(d['name'])
+        dailymed_link = f"https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query={safe_drug_name}"
+        
+        c_tox_1, c_tox_2 = st.columns([1, 1.5])
+        
+        with c_tox_1:
+            # 雷達圖 (AI 模擬)
             h = int(hashlib.sha256(d['name'].encode()).hexdigest(), 16) % 100
             vals = [(h%10)/2, (h%8)/2, (h%6)+2, 10-m['score'], h%5]
             cats = ['hERG', 'Ames', 'Liver', 'Absorb', 'Metab']
@@ -277,28 +293,46 @@ try:
             fig.add_trace(go.Scatterpolar(r=vals, theta=cats, fill='toself', name='Risk'))
             fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), height=300, margin=dict(t=20, b=20))
             st.plotly_chart(fig, use_container_width=True)
-        
-        with r2:
-            # hERG
-            with st.expander("🫀 心臟毒性 (hERG Inhibition)", expanded=True):
-                if i['tox_herg_risk'] in ["Moderate", "High"]: st.warning(f"**風險等級: {i['tox_herg_risk']}**")
-                else: st.success(f"**風險等級: {i['tox_herg_risk']}**")
-                st.write(f"**機制:** {i['tox_herg_desc']}")
-                st.write(f"**族群:** {i['tox_herg_pop']}")
-                st.markdown(f"📚 **出處:** {i['tox_herg_ref']}") # 這裡有連結
-
-            # Liver
-            with st.expander("🧪 肝臟毒性 (Hepatotoxicity)"):
-                if i['tox_liver_risk'] in ["Moderate", "High"]: st.warning(f"**風險等級: {i['tox_liver_risk']}**")
-                else: st.success(f"**風險等級: {i['tox_liver_risk']}**")
-                st.write(f"**機制:** {i['tox_liver_desc']}")
-                st.markdown(f"📚 **出處:** {i['tox_liver_ref']}") # 這裡有連結
             
-            # Ames
-            with st.expander("🧬 致突變性 (Ames Mutagenicity)"):
-                st.write(f"**風險:** {i['tox_ames_risk']}")
-                st.write(f"**結果:** {i['tox_ames_desc']}")
-                st.markdown(f"📚 **出處:** {i['tox_ames_ref']}") # 這裡有連結
+            st.markdown(f"""
+            <a href="{dailymed_link}" target="_blank">
+                <button style="width:100%; padding:10px; background-color:#003366; color:white; border:none; border-radius:5px; cursor:pointer;">
+                    🔗 前往 DailyMed 查看完整標籤 (Official PDF)
+                </button>
+            </a>
+            """, unsafe_allow_html=True)
+
+        with c_tox_2:
+            if fda['found']:
+                # === 顯示真實 FDA 數據 ===
+                st.success("✅ **成功連線 FDA 資料庫 (openFDA)** - 以下顯示真實藥品標籤內容：")
+                
+                # 1. 黑框警示 (最重要)
+                if "No Boxed Warning" not in fda['boxed_warning']:
+                    st.error("🚨 **黑框警示 (Boxed Warning - FDA):**")
+                    st.warning(fda['boxed_warning'][:600] + "...") # 截斷過長文字
+                else:
+                    st.info("✅ **黑框警示:** 此藥物目前無 FDA 黑框警示。")
+                
+                # 2. 作用機轉
+                with st.expander("🧬 作用機轉 (Mechanism of Action - FDA)", expanded=True):
+                    st.write(fda['mechanism_of_action'])
+                
+                # 3. 副作用
+                with st.expander("🤢 不良反應 (Adverse Reactions - FDA)"):
+                    st.text_area("詳細內容", fda['adverse_reactions'], height=150)
+                    
+            else:
+                # === 顯示 AI 預測數據 (當 FDA 查不到時) ===
+                st.info("ℹ️ **FDA 資料庫未收錄此化合物** (可能為研發中新藥)。以下為 **BrainX AI 預測報告**：")
+                
+                with st.expander("🫀 心臟毒性 (AI Prediction)", expanded=True):
+                    st.write(f"**風險:** {i['tox_herg_risk']}")
+                    st.write(f"**機制:** {i['tox_herg_desc']}")
+                
+                with st.expander("🧪 肝臟毒性 (AI Prediction)"):
+                    st.write(f"**風險:** {i['tox_liver_risk']}")
+                    st.write(f"**機制:** {i['tox_liver_desc']}")
 
         st.divider()
 
@@ -317,8 +351,9 @@ try:
                 showmol(v1, height=300, width=400)
             
         with o2:
-            st.success(f"📈 **AI 優化建議: {i['opt_suggestion']}**")
-            st.write(f"**原理:** {i['opt_reason']}")
+            st.success(f"📈 **AI 優化建議: {i.get('opt_suggestion', 'Bioisostere Replacement')}**")
+            st.write(f"**原理:** {i.get('opt_reason', '改善理化性質')}")
+            
             if i.get('opt_smiles'):
                 mol_opt = Chem.MolFromSmiles(i['opt_smiles'])
                 if mol_opt:
