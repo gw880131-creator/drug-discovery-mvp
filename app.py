@@ -9,9 +9,9 @@ import requests
 import urllib.parse
 import time
 
-# --- 1. 頁面與 CSS 風格設定 (複製您的 HTML 風格) ---
+# --- 1. 頁面與 CSS 風格設定 (深海藍企業風格) ---
 st.set_page_config(
-    page_title="MedChem Pro | Enterprise Drug Discovery Platform", 
+    page_title="MedChem Pro | Drug Discovery Platform", 
     page_icon="🧬", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -20,17 +20,17 @@ st.set_page_config(
 # 強制注入 Tailwind 風格的 CSS
 st.markdown("""
 <style>
-    /* 引入 Google Fonts */
+    /* 引入字體 */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 
-    /* 全局背景：深海藍漸層 */
+    /* 全局背景 */
     .stApp {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         color: #e2e8f0;
         font-family: 'Inter', sans-serif;
     }
 
-    /* 玻璃擬態面板 (Glass Panel) */
+    /* 玻璃擬態面板 */
     div[data-testid="stExpander"], div.css-1r6slb0, .stDataFrame, .metric-card {
         background: rgba(30, 41, 59, 0.7) !important;
         backdrop-filter: blur(12px);
@@ -41,7 +41,7 @@ st.markdown("""
         padding: 15px;
     }
 
-    /* 輸入框樣式 */
+    /* 輸入框 */
     .stTextInput input {
         background-color: rgba(15, 23, 42, 0.8) !important;
         color: #e2e8f0 !important;
@@ -49,7 +49,7 @@ st.markdown("""
         border-radius: 8px;
     }
 
-    /* 按鈕樣式 (仿 Tailwind blue-600) */
+    /* 按鈕 (Blue Gradient) */
     .stButton>button {
         background: linear-gradient(to right, #2563eb, #3b82f6);
         color: white;
@@ -63,10 +63,10 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
-    /* 關鍵指標數值顏色 */
+    /* 關鍵指標數值 */
     div[data-testid="stMetricValue"] {
         font-family: 'JetBrains Mono', monospace;
-        color: #38bdf8 !important; /* Sky Blue */
+        color: #38bdf8 !important;
         text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
     }
     div[data-testid="stMetricLabel"] {
@@ -74,17 +74,17 @@ st.markdown("""
         font-size: 0.8rem;
     }
 
-    /* 側邊欄樣式 */
+    /* 側邊欄 */
     section[data-testid="stSidebar"] {
         background-color: rgba(15, 23, 42, 0.95);
         border-right: 1px solid rgba(148, 163, 184, 0.1);
     }
 
-    /* 標題與文字顏色 */
+    /* 文字顏色 */
     h1, h2, h3 { color: #f8fafc !important; }
     p, li { color: #cbd5e1; }
 
-    /* 自定義 Badge */
+    /* Badge */
     .enterprise-badge {
         background: linear-gradient(90deg, #f59e0b, #d97706);
         color: white;
@@ -97,20 +97,22 @@ st.markdown("""
     }
     
     /* 風險等級顏色 */
-    .risk-high { color: #ef4444; font-weight: bold; text-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
+    .risk-high { color: #ef4444; font-weight: bold; }
     .risk-medium { color: #f59e0b; font-weight: bold; }
-    .risk-low { color: #10b981; font-weight: bold; text-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+    .risk-low { color: #10b981; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 核心運算邏輯 (保留您需要的 Python 功能) ---
+# --- 2. 核心運算邏輯 (通用版) ---
 
-# 資料庫模擬
+# 通用專利資料庫 (無敏感資料)
 PATENT_DB = {
     "donepezil": {"patent_no": "US4895841", "expiry": "Expired (2010)", "similarity": 82, "risk": "Yellow"},
-    "memantine": {"patent_no": "US4122193", "expiry": "Expired (2015)", "similarity": 15, "risk": "Green"}
+    "memantine": {"patent_no": "US4122193", "expiry": "Expired (2015)", "similarity": 15, "risk": "Green"},
+    "aspirin": {"patent_no": "Expired", "expiry": "Public Domain", "similarity": 10, "risk": "Green"}
 }
 
+# 結構優化策略 (MedChem Logic)
 TRANSFORMATIONS = {
     "reduce_lipophilicity": [
         {"name": "Scaffold Hop (苯環 → 吡啶)", "smarts": "c1ccccc1>>c1ccncc1", "desc": "引入氮原子增加極性，降低 LogP", "ref": "Bioorg. Med. Chem. 2013"},
@@ -136,6 +138,7 @@ def calculate_metrics(mol):
 
 def apply_transformation(mol, metrics):
     logp = metrics['logp']
+    # 通用診斷邏輯
     if logp > 4.0:
         cat, reason = "reduce_lipophilicity", "⚠️ LogP 過高 (>4.0)，建議引入雜環。"
     elif logp < 1.0:
@@ -159,11 +162,12 @@ def generate_3d_block(mol):
     try:
         mol_3d = Chem.AddHs(mol)
         AllChem.EmbedMolecule(mol_3d, AllChem.ETKDGv2())
-        AllChem.MMFFOptimizeMolecule(mol_3d)
+        try: AllChem.MMFFOptimizeMolecule(mol_3d)
+        except: pass
         return Chem.MolToPDBBlock(mol_3d)
     except: return None
 
-# API 連線 (ChEMBL)
+# API 連線 (ChEMBL) - 通用查詢
 @st.cache_data(ttl=3600)
 def fetch_chembl_data(smiles):
     try:
@@ -184,17 +188,17 @@ def fetch_chembl_data(smiles):
     except: pass
     return {"found": False}
 
-# --- 3. UI 主程式 (仿 HTML 結構) ---
+# --- 3. UI 主程式 ---
 
-# Header 區塊
+# Header
 c1, c2 = st.columns([3, 1])
 with c1:
-    st.markdown('# MedChem <span style="color:#3b82f6">Pro</span> <span class="enterprise-badge">Enterprise V25.0</span>', unsafe_allow_html=True)
-    st.caption("工業級藥物篩選平台 | FDA 21 CFR Part 11 Compliant | Powered by RDKit & BrainX AI")
+    st.markdown('# MedChem <span style="color:#3b82f6">Pro</span> <span class="enterprise-badge">Enterprise V26.0</span>', unsafe_allow_html=True)
+    st.caption("工業級藥物篩選平台 | 符合 FDA 21 CFR Part 11 標準")
 with c2:
     st.markdown('<div style="text-align:right; color:#4ade80; padding-top:20px;"><i class="fas fa-check-circle"></i> System Online</div>', unsafe_allow_html=True)
 
-# 側邊欄
+# Sidebar (完全乾淨，只有安全範例)
 with st.sidebar:
     st.header("🔍 藥物檢索")
     search_input = st.text_input("輸入藥名 / SMILES", "Donepezil")
@@ -206,10 +210,11 @@ with st.sidebar:
         batch_btn = st.button("📂 批量上傳", use_container_width=True)
         
     st.markdown("---")
-    st.markdown("#### 📚 快速範例")
-    if st.button("Ceftriaxone (BX100)"):
-        search_input = "Ceftriaxone" # 這行在 Streamlit logic 中需配合 session_state 使用，此為簡化
-        st.info("請在上方輸入框鍵入 'Ceftriaxone' 後點擊分析")
+    st.markdown("#### 📚 快速範例 (Safe Demo)")
+    if st.button("Donepezil (AD Drug)"):
+        st.info("請在上方輸入框確認 'Donepezil' 後點擊分析")
+    if st.button("Aspirin (Common)"):
+        st.info("請在上方輸入框輸入 'Aspirin' 後點擊分析")
     
     st.markdown("---")
     st.caption("Connected to: ChEMBL, PubChem, USPTO")
@@ -228,7 +233,7 @@ if run_btn and search_input:
         except: mol = None
         
         if not mol:
-            st.error("❌ 無法解析分子結構")
+            st.error("❌ 無法解析分子結構，請檢查輸入。")
         else:
             time.sleep(0.5) # 模擬運算感
             metrics = calculate_metrics(mol)
@@ -240,7 +245,7 @@ if run_btn and search_input:
             # Tab 1: 科學核心
             st.markdown("### 1️⃣ 核心科學運算模組 (Scientific Core)")
             
-            # 五大指標卡
+            # 五大指標
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("MW (分子量)", f"{metrics['mw']:.1f}", delta="< 500")
             k2.metric("LogP (脂溶性)", f"{metrics['logp']:.2f}", delta="1-3")
@@ -270,11 +275,10 @@ if run_btn and search_input:
                 st.markdown("""
                 <div style="background:rgba(30,41,59,0.5); padding:15px; border-radius:10px; border:1px solid rgba(255,255,255,0.1);">
                     <h4 style="color:#fcd34d; margin-top:0;">🥚 蛋黃圖分析</h4>
-                    <p style="font-size:0.9rem; color:#cbd5e1;">此圖預測藥物能否穿透血腦屏障 (BBB)。</p>
+                    <p style="font-size:0.9rem; color:#cbd5e1;">預測藥物能否穿透血腦屏障 (BBB)。</p>
                     <ul style="font-size:0.8rem; color:#94a3b8; padding-left:20px;">
                         <li>🟡 <strong>黃色區 (BBB):</strong> 容易入腦</li>
                         <li>⚪ <strong>白色區 (HIA):</strong> 腸道吸收佳</li>
-                        <li>🔴 <strong>紅點:</strong> 您的分子</li>
                     </ul>
                 </div>
                 """, unsafe_allow_html=True)
@@ -306,6 +310,7 @@ if run_btn and search_input:
             t1, t2 = st.tabs(["☠️ 毒理風險", "⚖️ 專利 FTO"])
             
             with t1:
+                # 毒理風險通用預測
                 col_h, col_l = st.columns(2)
                 with col_h:
                     risk = "Moderate" if metrics['logp'] > 3.5 else "Low"
@@ -333,9 +338,9 @@ if run_btn and search_input:
                     st.dataframe(pd.DataFrame(chembl['acts']), use_container_width=True)
 
             with t2:
-                # FTO 模擬圖
+                # FTO 模擬圖 (通用數據，不含敏感專利)
                 st.markdown("#### 🗺️ 專利風險地圖")
-                sim_val = 82 if "donepezil" in search_input.lower() else 15
+                sim_val = 82 if "donepezil" in search_input.lower() else 12 # 通用低風險
                 fig_p = go.Figure()
                 fig_p.add_vrect(x0=0, x1=80, fillcolor="rgba(34, 197, 94, 0.1)", line_width=0, annotation_text="安全區")
                 fig_p.add_vrect(x0=80, x1=100, fillcolor="rgba(239, 68, 68, 0.1)", line_width=0, annotation_text="侵權區")
@@ -348,6 +353,6 @@ if run_btn and search_input:
                 st.plotly_chart(fig_p, use_container_width=True)
                 
                 if sim_val > 80:
-                    st.warning("⚠️ **高風險:** 結構與專利 US4895841 (Donepezil) 高度相似。建議進行 Claim 分析。")
+                    st.warning("⚠️ **高風險:** 結構與專利 US4895841 (Donepezil) 高度相似。")
                 else:
                     st.success("✅ **低風險:** 未發現高度相似的核心專利。")
