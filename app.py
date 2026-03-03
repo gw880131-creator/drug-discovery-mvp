@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 from rdkit import Chem
 from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Fragments
 import py3Dmol
@@ -214,8 +215,7 @@ with c2:
 # 內部使用警示 (來自 app_internal.py 的概念)
 st.markdown("""
 <div class="internal-warning">
-    ⚠️ INTERNAL R&D USE ONLY - NOT FOR REGULATORY SUBMISSION<br>
-    本工具數據僅供研發篩選參考，最終決策需以濕實驗數據為準。
+    ⚠️ INTERNAL R&D USE ONLY - NOT FOR REGULATORY SUBMISSION<br
 </div>
 """, unsafe_allow_html=True)
 
