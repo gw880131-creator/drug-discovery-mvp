@@ -1,431 +1,258 @@
 import streamlit as st
 import pandas as pd
-import requests
-import json
+import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, QED, DataStructs
+from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw, rdMolDescriptors
+from rdkit.Chem.Scaffolds import MurckoScaffold
+from rdkit.Chem import rdRascalMCES
+import sqlite3
+import json
+import hashlib
+from datetime import datetime
+import requests
 import pubchempy as pcp
 from chembl_webresource_client.new_client import new_client
-import time
+import plotly.express as px
+import plotly.graph_objects as go
+from PIL import Image
+import io
+import base64
 
-# ==================== 公開資料庫 API 整合層 ====================
+# ==================== 頁面設定 ====================
+st.set_page_config(
+    page_title="MedChem Pro | Enterprise R&D Platform",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class PublicDatabaseAPI:
-    """整合 PubChem, ChEMBL, UniChem 的統一介面"""
+# ==================== CSS 樣式 ====================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
     
-    def __init__(self):
-        # ChEMBL 客戶端初始化
-        self.chembl_targets = new_client.target
-        self.chembl_compounds = new_client.molecule
-        self.chembl_bioactivities = new_client.activity
-        self.chembl_assays = new_client.assay
+    .stApp { 
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+        color: #e2e8f0; 
+        font-family: 'Inter', sans-serif; 
+    }
+    
+    .metric-card {
+        background: rgba(30, 41, 59, 0.7) !important;
+        backdrop-filter: blur(12px); 
+        border: 1px solid rgba(148, 163, 184, 0.1); 
+        border-radius: 16px; 
+        padding: 20px;
+        margin: 10px 0;
+    }
+    
+    .internal-warning {
+        background-color: rgba(245, 158, 11, 0.15); 
+        border: 1px solid #f59e0b; 
+        color: #fbbf24; 
+        padding: 15px; 
+        border-radius: 8px; 
+        font-size: 0.9rem; 
+        text-align: center;
+        margin-bottom: 20px;
+        font-weight: 600;
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 99px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .status-active { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .status-pending { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .status-depleted { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    
+    div[data-testid="stMetricValue"] { 
+        font-family: 'JetBrains Mono', monospace; 
+        color: #38bdf8 !important; 
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==================== 資料庫初始化 ====================
+def init_database():
+    """初始化 SQLite 資料庫"""
+    conn = sqlite3.connect('medchem_pro.db', check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # 化合物註冊表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS compounds (
+            compound_id TEXT PRIMARY KEY,
+            smiles TEXT UNIQUE,
+            inchikey TEXT UNIQUE,
+            mol_weight REAL,
+            logp REAL,
+            tpsa REAL,
+            registered_by TEXT,
+            project_code TEXT,
+            registration_date TEXT,
+            status TEXT DEFAULT 'active',
+            metadata TEXT
+        )
+    ''')
+    
+    # 庫存表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            sample_id TEXT PRIMARY KEY,
+            compound_id TEXT,
+            batch_id TEXT,
+            quantity_mg REAL,
+            storage_temp TEXT,
+            location TEXT,
+            status TEXT DEFAULT 'available',
+            history TEXT,
+            FOREIGN KEY (compound_id) REFERENCES compounds(compound_id)
+        )
+    ''')
+    
+    # 實驗記錄表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS experiments (
+            exp_id TEXT PRIMARY KEY,
+            title TEXT,
+            chemist TEXT,
+            project_code TEXT,
+            created_date TEXT,
+            status TEXT,
+            objective TEXT,
+            procedure TEXT,
+            results TEXT,
+            compounds_used TEXT
+        )
+    ''')
+    
+    # SAR 數據表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bioassay_data (
+            data_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compound_id TEXT,
+            exp_id TEXT,
+            assay_type TEXT,
+            value REAL,
+            unit TEXT,
+            timestamp TEXT,
+            FOREIGN KEY (compound_id) REFERENCES compounds(compound_id),
+            FOREIGN KEY (exp_id) REFERENCES experiments(exp_id)
+        )
+    ''')
+    
+    conn.commit()
+    return conn
+
+# 初始化資料庫連接
+if 'db_conn' not in st.session_state:
+    st.session_state.db_conn = init_database()
+
+# ==================== 核心類別 ====================
+
+class CompoundRegistry:
+    """化合物註冊系統"""
+    
+    def __init__(self, conn):
+        self.conn = conn
+        self.cursor = conn.cursor()
+    
+    def register(self, smiles, chemist_name, project_code, metadata=None):
+        """註冊新化合物"""
+        mol = Chem.MolFromSmiles(smiles)
+        if not mol:
+            return None, "Invalid SMILES"
         
-        # UniChem API 端點
-        self.unichem_url = "https://www.ebi.ac.uk/unichem/api/v1/compounds"
+        # 標準化
+        standardized = Chem.MolToSmiles(mol, isomericSmiles=True)
+        inchikey = Chem.InchiToInchiKey(Chem.MolToInchi(mol))
         
-        # PubChem PUG REST API
-        self.pubchem_rest = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
-    
-    # --- 1. PubChem 即時查詢 ---
-    def query_pubchem_live(self, identifier, id_type="name"):
-        """
-        即時查詢 PubChem 取得完整化合物資訊
-        id_type: name, cid, smiles, inchikey
-        """
-        try:
-            if id_type == "smiles":
-                # 使用 SMILES 查詢
-                c = pcp.get_compounds(identifier, "smiles")
-            elif id_type == "inchikey":
-                c = pcp.get_compounds(identifier, "inchikey")
-            else:
-                c = pcp.get_compounds(identifier, id_type)
-            
-            if not c:
-                return None
-                
-            comp = c[0]
-            return {
-                "source": "PubChem",
-                "cid": comp.cid,
-                "name": comp.iupac_name or comp.synonyms[0] if comp.synonyms else "Unknown",
-                "smiles": comp.isomeric_smiles or comp.canonical_smiles,
-                "inchi": comp.inchi,
-                "inchikey": comp.inchikey,
-                "molecular_formula": comp.molecular_formula,
-                "molecular_weight": comp.molecular_weight,
-                "xlogp": comp.xlogp,
-                "tpsa": comp.tpsa,
-                "complexity": comp.complexity,
-                "hbond_donor": comp.h_bond_donor_count,
-                "hbond_acceptor": comp.h_bond_acceptor_count,
-                "rotatable_bonds": comp.rotatable_bond_count,
-                "exact_mass": comp.exact_mass,
-                "charge": comp.charge,
-                "synonyms": comp.synonyms[:5] if comp.synonyms else [],
-                "description": comp.description if hasattr(comp, 'description') else None,
-                "url": f"https://pubchem.ncbi.nlm.nih.gov/compound/{comp.cid}"
-            }
-        except Exception as e:
-            st.error(f"PubChem 查詢錯誤: {e}")
-            return None
-    
-    # --- 2. ChEMBL 生物活性數據查詢 ---
-    def query_chembl_bioactivity(self, chembl_id=None, target_name=None, compound_name=None):
-        """
-        查詢 ChEMBL 生物活性數據
-        可通過 ChEMBL ID、標靶名稱或化合物名稱查詢
-        """
-        results = {
-            "compounds": [],
-            "bioactivities": [],
-            "targets": []
+        # 檢查重複
+        self.cursor.execute("SELECT compound_id FROM compounds WHERE inchikey = ?", (inchikey,))
+        existing = self.cursor.fetchone()
+        if existing:
+            return existing[0], "Already exists"
+        
+        # 計算屬性
+        props = {
+            'mw': Descriptors.MolWt(mol),
+            'logp': Descriptors.MolLogP(mol),
+            'tpsa': Descriptors.TPSA(mol)
         }
         
-        try:
-            # 如果提供化合物 ChEMBL ID
-            if chembl_id:
-                # 取得化合物詳情
-                compound_data = self.chembl_compounds.get(chembl_id)
-                if compound_data:
-                    results["compounds"].append({
-                        "chembl_id": chembl_id,
-                        "name": compound_data.get('pref_name', 'N/A'),
-                        "smiles": compound_data.get('molecule_structures', {}).get('canonical_smiles', ''),
-                        "properties": compound_data.get('molecule_properties', {})
-                    })
-                    
-                    # 查詢相關生物活性
-                    bioacts = self.chembl_bioactivities.filter(
-                        molecule_chembl_id=chembl_id,
-                        type__in=["IC50", "Ki", "Kd", "EC50"],
-                        relation__in=["=", "<"]
-                    ).only("type", "standard_value", "standard_units", 
-                           "target_chembl_id", "assay_chembl_id", "activity_comment")
-                    
-                    for bio in bioacts[:20]:  # 限制前20筆
-                        results["bioactivities"].append({
-                            "type": bio.get('type'),
-                            "value": bio.get('standard_value'),
-                            "units": bio.get('standard_units'),
-                            "target_id": bio.get('target_chembl_id'),
-                            "assay_id": bio.get('assay_chembl_id'),
-                            "comment": bio.get('activity_comment')
-                        })
-            
-            # 如果提供標靶名稱（如 EGFR, AChE）
-            elif target_name:
-                targets = self.chembl_targets.search(target_name)
-                if targets:
-                    target = targets[0]
-                    target_id = target['target_chembl_id']
-                    results["targets"].append({
-                        "chembl_id": target_id,
-                        "name": target.get('pref_name'),
-                        "type": target.get('target_type'),
-                        "organism": target.get('organism')
-                    })
-                    
-                    # 查詢該標靶的所有活性化合物
-                    bioacts = self.chembl_bioactivities.filter(
-                        target_chembl_id=target_id,
-                        type="IC50",
-                        relation="="
-                    ).only("molecule_chembl_id", "standard_value", "standard_units")
-                    
-                    # 取得唯一化合物清單
-                    unique_compounds = list(set([b['molecule_chembl_id'] for b in bioacts]))
-                    
-                    # 批次查詢化合物資訊
-                    for comp_id in unique_compounds[:10]:
-                        comp_data = self.chembl_compounds.get(comp_id)
-                        if comp_data:
-                            results["compounds"].append({
-                                "chembl_id": comp_id,
-                                "name": comp_data.get('pref_name', 'N/A'),
-                                "smiles": comp_data.get('molecule_structures', {}).get('canonical_smiles', '')
-                            })
-                            
-        except Exception as e:
-            st.error(f"ChEMBL 查詢錯誤: {e}")
-            
-        return results
-    
-    # --- 3. UniChem 交叉引用查詢 ---
-    def query_unichem_crossref(self, identifier, id_type="inchikey"):
-        """
-        使用 UniChem 查詢化合物在多個資料庫的交叉引用
-        支援: inchikey, inchi, smiles
-        """
-        try:
-            payload = {
-                "type": id_type,
-                "compound": identifier
-            }
-            
-            response = requests.post(
-                self.unichem_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                cross_refs = []
-                
-                if 'compounds' in data:
-                    for compound in data['compounds']:
-                        for source in compound.get('sources', []):
-                            cross_refs.append({
-                                "database": source.get('name'),
-                                "id_in_source": source.get('compoundId'),
-                                "url": source.get('url'),
-                                "short_name": source.get('shortName')
-                            })
-                
-                return {
-                    "query": identifier,
-                    "total_sources": len(cross_refs),
-                    "cross_references": cross_refs,
-                    "uci": compound.get('uci') if 'compounds' in data and data['compounds'] else None
-                }
-            else:
-                return None
-                
-        except Exception as e:
-            st.error(f"UniChem 查詢錯誤: {e}")
-            return None
-    
-    # --- 4. PubChem PUG REST 進階查詢 ---
-    def query_pubchem_advanced(self, cid, properties=None):
-        """
-        使用 PubChem PUG REST API 取得特定屬性
-        """
-        if properties is None:
-            properties = ["MolecularWeight", "XLogP", "TPSA", "Complexity"]
+        # 生成 ID
+        compound_id = f"CPD-{datetime.now().strftime('%Y%m%d')}-{hashlib.md5(inchikey.encode()).hexdigest()[:6].upper()}"
         
-        prop_str = ",".join(properties)
-        url = f"{self.pubchem_rest}/compound/cid/{cid}/property/{prop_str}/JSON"
+        # 存入資料庫
+        self.cursor.execute('''
+            INSERT INTO compounds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            compound_id, standardized, inchikey, props['mw'], props['logp'], 
+            props['tpsa'], chemist_name, project_code, 
+            datetime.now().isoformat(), 'active', json.dumps(metadata or {})
+        ))
+        self.conn.commit()
         
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                return response.json()['PropertyTable']['Properties'][0]
-            return None
-        except:
-            return None
+        return compound_id, "Registration successful"
     
-    # --- 5. 結構相似性搜尋 (PubChem) ---
-    def search_pubchem_similarity(self, smiles, threshold=90, max_records=20):
-        """
-        在 PubChem 中搜尋結構相似化合物
-        threshold: Tanimoto 相似度閾值 (0-100)
-        """
-        try:
-            # 使用 PubChem PUG REST 進行相似性搜尋
-            url = f"{self.pubchem_rest}/compound/fastsimilarity_2d/smiles/{requests.utils.quote(smiles)}/cids/JSON"
-            params = {"Threshold": threshold, "MaxRecords": max_records}
-            
-            response = requests.get(url, params=params, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                cids = data.get('IdentifierList', {}).get('CID', [])
-                
-                similar_compounds = []
-                for cid in cids[:max_records]:
-                    comp_info = self.query_pubchem_live(str(cid), "cid")
-                    if comp_info:
-                        similar_compounds.append(comp_info)
-                
-                return similar_compounds
+    def search(self, query, search_type="compound_id"):
+        """搜尋化合物"""
+        if search_type == "compound_id":
+            self.cursor.execute("SELECT * FROM compounds WHERE compound_id = ?", (query,))
+        elif search_type == "smiles":
+            self.cursor.execute("SELECT * FROM compounds WHERE smiles LIKE ?", (f"%{query}%",))
+        elif search_type == "project":
+            self.cursor.execute("SELECT * FROM compounds WHERE project_code = ?", (query,))
+        
+        rows = self.cursor.fetchall()
+        columns = [desc[0] for desc in self.cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def substructure_search(self, query_smiles):
+        """子結構搜尋"""
+        query_mol = Chem.MolFromSmiles(query_smiles)
+        if not query_mol:
             return []
-        except Exception as e:
-            st.error(f"相似性搜尋錯誤: {e}")
-            return []
+        
+        self.cursor.execute("SELECT compound_id, smiles FROM compounds WHERE status = 'active'")
+        matches = []
+        for cid, smiles in self.cursor.fetchall():
+            mol = Chem.MolFromSmiles(smiles)
+            if mol and mol.HasSubstructMatch(query_mol):
+                matches.append(cid)
+        return matches
 
-# ==================== 強化版 Streamlit UI ====================
-
-def main():
-    st.set_page_config(
-        page_title="MedChem Pro | Live Database Edition", 
-        page_icon="🧬", 
-        layout="wide"
-    )
+class InventoryManager:
+    """庫存管理系統"""
     
-    # 初始化 API 連接器
-    if 'api' not in st.session_state:
-        st.session_state.api = PublicDatabaseAPI()
+    def __init__(self, conn):
+        self.conn = conn
+        self.cursor = conn.cursor()
     
-    st.title("🧬 MedChem Pro - 即時公開資料庫版")
-    st.markdown("即時連線 **PubChem** | **ChEMBL** | **UniChem**")
+    def add_sample(self, compound_id, batch_id, quantity_mg, storage_temp, location):
+        """新增樣品"""
+        sample_id = f"{compound_id}_{batch_id}"
+        
+        history = json.dumps([{
+            'action': 'received',
+            'date': datetime.now().isoformat(),
+            'quantity': quantity_mg
+        }])
+        
+        try:
+            self.cursor.execute('''
+                INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (sample_id, compound_id, batch_id, quantity_mg, storage_temp, location, 'available', history))
+            self.conn.commit()
+            return sample_id, "Success"
+        except sqlite3.IntegrityError:
+            return None, "Sample already exists"
     
-    # 側邊欄搜尋
-    with st.sidebar:
-        st.header("🔍 多資料庫搜尋")
-        
-        search_type = st.selectbox(
-            "搜尋類型",
-            ["化合物名稱", "SMILES", "InChIKey", "ChEMBL ID", "標靶名稱"]
-        )
-        
-        search_input = st.text_input("輸入搜尋內容", "Aspirin")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            search_btn = st.button("🚀 搜尋", use_container_width=True)
-        with col2:
-            similarity_search = st.checkbox("相似性搜尋")
-        
-        st.markdown("---")
-        st.markdown("### 資料庫狀態")
-        st.success("🟢 PubChem: 連線中")
-        st.success("🟢 ChEMBL: 連線中")
-        st.success("🟢 UniChem: 連線中")
-    
-    if search_btn and search_input:
-        api = st.session_state.api
-        
-        with st.spinner("正在查詢多個公開資料庫..."):
-            progress_bar = st.progress(0)
-            
-            # 1. PubChem 查詢
-            progress_bar.progress(25)
-            if search_type == "化合物名稱":
-                pubchem_data = api.query_pubchem_live(search_input, "name")
-            elif search_type == "SMILES":
-                pubchem_data = api.query_pubchem_live(search_input, "smiles")
-            elif search_type == "InChIKey":
-                pubchem_data = api.query_pubchem_live(search_input, "inchikey")
-            else:
-                pubchem_data = None
-            
-            # 2. ChEMBL 查詢
-            progress_bar.progress(50)
-            if search_type == "標靶名稱":
-                chembl_data = api.query_chembl_bioactivity(target_name=search_input)
-            elif search_type == "ChEMBL ID":
-                chembl_data = api.query_chembl_bioactivity(chembl_id=search_input)
-            else:
-                chembl_data = api.query_chembl_bioactivity(compound_name=search_input)
-            
-            # 3. UniChem 交叉引用
-            progress_bar.progress(75)
-            unichem_data = None
-            if pubchem_data and pubchem_data.get('inchikey'):
-                unichem_data = api.query_unichem_crossref(pubchem_data['inchikey'], "inchikey")
-            
-            # 4. 相似性搜尋
-            similar_compounds = []
-            if similarity_search and pubchem_data and pubchem_data.get('smiles'):
-                similar_compounds = api.search_pubchem_similarity(pubchem_data['smiles'])
-            
-            progress_bar.progress(100)
-            time.sleep(0.5)
-            progress_bar.empty()
-        
-        # ==================== 結果展示 ====================
-        
-        if pubchem_data:
-            st.success(f"✅ 成功從 **{pubchem_data['source']}** 取得資料")
-            
-            # 頂部資訊卡
-            cols = st.columns(4)
-            cols[0].metric("PubChem CID", pubchem_data['cid'])
-            cols[1].metric("分子量", f"{pubchem_data['molecular_weight']:.2f}")
-            cols[2].metric("XLogP", pubchem_data['xlogp'] if pubchem_data['xlogp'] else "N/A")
-            cols[3].metric("TPSA", pubchem_data['tpsa'] if pubchem_data['tpsa'] else "N/A")
-            
-            # Tab 介面
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📊 基礎資訊", 
-                "🧬 ChEMBL 生物活性", 
-                "🔗 UniChem 交叉引用",
-                "🔍 相似化合物"
-            ])
-            
-            with tab1:
-                col_left, col_right = st.columns([2, 1])
-                
-                with col_left:
-                    st.markdown("### 化合物詳情")
-                    info_df = pd.DataFrame([
-                        ["IUPAC 名稱", pubchem_data['name']],
-                        ["分子式", pubchem_data['molecular_formula']],
-                        ["SMILES", pubchem_data['smiles']],
-                        ["InChIKey", pubchem_data['inchikey']],
-                        ["精確質量", pubchem_data['exact_mass']],
-                        ["複雜度", pubchem_data['complexity']],
-                        ["氫鍵供體", pubchem_data['hbond_donor']],
-                        ["氫鍵受體", pubchem_data['hbond_acceptor']],
-                        ["可旋轉鍵", pubchem_data['rotatable_bonds']]
-                    ], columns=["屬性", "數值"])
-                    
-                    st.dataframe(info_df, use_container_width=True, hide_index=True)
-                    
-                    if pubchem_data.get('synonyms'):
-                        st.markdown("### 同義詞")
-                        st.write(", ".join(pubchem_data['synonyms']))
-                
-                with col_right:
-                    # 顯示 2D 結構（使用 PubChem 圖片）
-                    if pubchem_data['cid']:
-                        img_url = f"https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid={pubchem_data['cid']}&width=300&height=300"
-                        st.image(img_url, caption="PubChem 2D 結構")
-                    
-                    st.markdown(f"[🔗 在 PubChem 查看]({pubchem_data['url']})")
-            
-            with tab2:
-                if chembl_data and (chembl_data['compounds'] or chembl_data['bioactivities']):
-                    st.markdown("### ChEMBL 數據")
-                    
-                    if chembl_data['targets']:
-                        st.markdown("**標靶資訊：**")
-                        for t in chembl_data['targets']:
-                            st.write(f"- {t['name']} ({t['chembl_id']}) | {t['organism']}")
-                    
-                    if chembl_data['bioactivities']:
-                        st.markdown("**生物活性數據：**")
-                        bio_df = pd.DataFrame(chembl_data['bioactivities'])
-                        st.dataframe(bio_df, use_container_width=True)
-                    else:
-                        st.info("未找到生物活性數據")
-                else:
-                    st.info("ChEMBL 中無此化合物數據")
-            
-            with tab3:
-                if unichem_data:
-                    st.markdown(f"### 找到 {unichem_data['total_sources']} 個資料庫交叉引用")
-                    
-                    if unichem_data['cross_references']:
-                        ref_df = pd.DataFrame(unichem_data['cross_references'])
-                        st.dataframe(ref_df[['database', 'id_in_source', 'url']], 
-                                   use_container_width=True)
-                        
-                        # 視覺化資料庫分布
-                        db_counts = ref_df['database'].value_counts()
-                        st.bar_chart(db_counts)
-                else:
-                    st.info("未找到交叉引用數據")
-            
-            with tab4:
-                if similarity_search:
-                    if similar_compounds:
-                        st.markdown(f"### 找到 {len(similar_compounds)} 個相似化合物")
-                        
-                        sim_cols = st.columns(3)
-                        for idx, sim_comp in enumerate(similar_compounds[:6]):
-                            with sim_cols[idx % 3]:
-                                sim_img = f"https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid={sim_comp['cid']}&width=200&height=200"
-                                st.image(sim_img, caption=f"{sim_comp['name'][:30]}...")
-                                st.caption(f"CID: {sim_comp['cid']}")
-                    else:
-                        st.info("未找到相似化合物")
-                else:
-                    st.info("請在側邊欄勾選「相似性搜尋」")
-        
-        else:
-            st.error("❌ 無法在公開資料庫中找到該化合物")
-
-if __name__ == "__main__":
-    main()
+    def checkout(self, sample_id, amount_mg, user, experiment_id):
+        """領用樣品"""
+        self.cursor.execute("SELECT quantity_mg, history FROM inventory
