@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw, rdMolDescriptors
+from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw
 from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import rdRascalMCES
 import sqlite3
 import json
 import hashlib
@@ -14,9 +13,6 @@ import pubchempy as pcp
 from chembl_webresource_client.new_client import new_client
 import plotly.express as px
 import plotly.graph_objects as go
-from PIL import Image
-import io
-import base64
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
@@ -56,23 +52,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 20px;
         font-weight: 600;
-    }
-    
-    .status-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 99px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-    .status-active { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-    .status-pending { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-    .status-depleted { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-    
-    div[data-testid="stMetricValue"] { 
-        font-family: 'JetBrains Mono', monospace; 
-        color: #38bdf8 !important; 
     }
 </style>
 """, unsafe_allow_html=True)
@@ -255,4 +234,34 @@ class InventoryManager:
     
     def checkout(self, sample_id, amount_mg, user, experiment_id):
         """領用樣品"""
-        self.cursor.execute("SELECT quantity_mg, history FROM inventory
+        self.cursor.execute("SELECT quantity_mg, history FROM inventory WHERE sample_id = ?", (sample_id,))
+        row = self.cursor.fetchone()
+        
+        if not row:
+            return False, "Sample not found"
+        
+        current_qty, history_str = row
+        if current_qty < amount_mg:
+            return False, "Insufficient quantity"
+        
+        new_qty = current_qty - amount_mg
+        history = json.loads(history_str)
+        history.append({
+            'action': 'checkout',
+            'date': datetime.now().isoformat(),
+            'quantity': -amount_mg,
+            'user': user,
+            'experiment': experiment_id
+        })
+        
+        status = 'depleted' if new_qty == 0 else 'available'
+        
+        self.cursor.execute('''
+            UPDATE inventory SET quantity_mg = ?, history = ?, status = ? WHERE sample_id = ?
+        ''', (new_qty, json.dumps(history), status, sample_id))
+        self.conn.commit()
+        
+        return True, "Checkout successful"
+    
+    def get_inventory(self, compound_id=None):
+        """查詢庫存
