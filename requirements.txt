@@ -1,6 +1,5 @@
 streamlit>=1.28.0
 pandas>=1.5.0
-rdkit>=2023.3.1
 pubchempy>=1.0.4
 chembl-webresource-client>=0.10.8
 requests>=2.31.0
