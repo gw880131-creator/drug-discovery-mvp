@@ -1,369 +1,431 @@
 import streamlit as st
 import pandas as pd
+import requests
 import json
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Fragments
-import py3Dmol
-from stmol import showmol
-import plotly.graph_objects as go
-import requests
-import urllib.parse
-import time
+from rdkit.Chem import AllChem, Descriptors, QED, DataStructs
 import pubchempy as pcp
-from datetime import datetime
+from chembl_webresource_client.new_client import new_client
+import time
 
-# --- 1. 頁面設定 ---
-st.set_page_config(
-    page_title="MedChem Pro | R&D Integrated", 
-    page_icon="🧬", 
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# ==================== 公開資料庫 API 整合層 ====================
 
-# --- 2. CSS 風格設定 (深海藍企業風 + 內部警示) ---
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+class PublicDatabaseAPI:
+    """整合 PubChem, ChEMBL, UniChem 的統一介面"""
     
-    /* 全局背景 */
-    .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #e2e8f0; font-family: 'Inter', sans-serif; }
-    
-    /* 玻璃擬態卡片 */
-    div[data-testid="stExpander"], div.css-1r6slb0, .metric-card {
-        background: rgba(30, 41, 59, 0.7) !important;
-        backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 15px;
-    }
-    
-    /* 內部使用警示 */
-    .internal-warning {
-        background-color: rgba(245, 158, 11, 0.15); 
-        border: 1px solid #f59e0b; 
-        color: #fbbf24; 
-        padding: 10px; 
-        border-radius: 8px; 
-        font-size: 0.85rem; 
-        text-align: center;
-        margin-bottom: 20px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }
-
-    /* 輸入框與按鈕 */
-    .stTextInput input { background-color: rgba(15, 23, 42, 0.8) !important; color: #e2e8f0 !important; border: 1px solid #475569 !important; border-radius: 8px; }
-    .stButton>button { background: linear-gradient(to right, #2563eb, #3b82f6); color: white; border: none; border-radius: 8px; font-weight: 600; transition: all 0.3s; }
-    .stButton>button:hover { box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); transform: translateY(-1px); }
-    
-    /* 數值字體 */
-    div[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; color: #38bdf8 !important; text-shadow: 0 0 10px rgba(56, 189, 248, 0.3); }
-    div[data-testid="stMetricLabel"] { color: #94a3b8 !important; font-size: 0.8rem; }
-    
-    /* Badge */
-    .enterprise-badge { background: linear-gradient(90deg, #10b981, #059669); color: white; padding: 4px 12px; border-radius: 99px; font-size: 0.7rem; font-weight: bold; text-transform: uppercase; margin-left: 10px; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- 3. [整合核心] 免費開源 ADMET 規則引擎 ---
-class FreeADMETRules:
-    """
-    基於文獻規則的免費預測引擎 (無需 API)
-    整合自: Ekins et al. 2002, FDA DILIrank, BOILED-Egg
-    """
-    @staticmethod
-    def predict_herg(mol):
-        tpsa = Descriptors.TPSA(mol)
-        logp = Descriptors.MolLogP(mol)
+    def __init__(self):
+        # ChEMBL 客戶端初始化
+        self.chembl_targets = new_client.target
+        self.chembl_compounds = new_client.molecule
+        self.chembl_bioactivities = new_client.activity
+        self.chembl_assays = new_client.assay
         
-        # 結構警示 (SMARTS)
-        alerts = {
-            "High": ["[c]CCN", "[c]OCCN"], # 芳香環連接胺基
-            "Moderate": ["N(C)C", "CN(C)C"] # 叔胺
+        # UniChem API 端點
+        self.unichem_url = "https://www.ebi.ac.uk/unichem/api/v1/compounds"
+        
+        # PubChem PUG REST API
+        self.pubchem_rest = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
+    
+    # --- 1. PubChem 即時查詢 ---
+    def query_pubchem_live(self, identifier, id_type="name"):
+        """
+        即時查詢 PubChem 取得完整化合物資訊
+        id_type: name, cid, smiles, inchikey
+        """
+        try:
+            if id_type == "smiles":
+                # 使用 SMILES 查詢
+                c = pcp.get_compounds(identifier, "smiles")
+            elif id_type == "inchikey":
+                c = pcp.get_compounds(identifier, "inchikey")
+            else:
+                c = pcp.get_compounds(identifier, id_type)
+            
+            if not c:
+                return None
+                
+            comp = c[0]
+            return {
+                "source": "PubChem",
+                "cid": comp.cid,
+                "name": comp.iupac_name or comp.synonyms[0] if comp.synonyms else "Unknown",
+                "smiles": comp.isomeric_smiles or comp.canonical_smiles,
+                "inchi": comp.inchi,
+                "inchikey": comp.inchikey,
+                "molecular_formula": comp.molecular_formula,
+                "molecular_weight": comp.molecular_weight,
+                "xlogp": comp.xlogp,
+                "tpsa": comp.tpsa,
+                "complexity": comp.complexity,
+                "hbond_donor": comp.h_bond_donor_count,
+                "hbond_acceptor": comp.h_bond_acceptor_count,
+                "rotatable_bonds": comp.rotatable_bond_count,
+                "exact_mass": comp.exact_mass,
+                "charge": comp.charge,
+                "synonyms": comp.synonyms[:5] if comp.synonyms else [],
+                "description": comp.description if hasattr(comp, 'description') else None,
+                "url": f"https://pubchem.ncbi.nlm.nih.gov/compound/{comp.cid}"
+            }
+        except Exception as e:
+            st.error(f"PubChem 查詢錯誤: {e}")
+            return None
+    
+    # --- 2. ChEMBL 生物活性數據查詢 ---
+    def query_chembl_bioactivity(self, chembl_id=None, target_name=None, compound_name=None):
+        """
+        查詢 ChEMBL 生物活性數據
+        可通過 ChEMBL ID、標靶名稱或化合物名稱查詢
+        """
+        results = {
+            "compounds": [],
+            "bioactivities": [],
+            "targets": []
         }
         
-        # 1. 物理性質規則 (Ekins et al.)
-        if tpsa < 60 and logp > 3.5:
-            return "High", "High lipophilicity & Low TPSA (LogP>3.5, TPSA<60)", "Ekins et al. J Pharmacol Exp Ther 2002"
-            
-        # 2. 結構特徵檢查
-        for level, patterns in alerts.items():
-            for patt in patterns:
-                if mol.HasSubstructMatch(Chem.MolFromSmarts(patt)):
-                    return level, f"Contains hERG pharmacophore ({patt})", "Structural Alert"
-                    
-        return "Low", "No significant structural alerts detected", "Rule-based prediction"
-
-    @staticmethod
-    def predict_liver(mol):
-        mw = Descriptors.MolWt(mol)
-        logp = Descriptors.MolLogP(mol)
-        
-        # 1. 雙重高風險 (FDA DILIrank)
-        if logp > 4.0 and mw > 400:
-            return "Moderate", "Rule of 2: LogP > 4 & MW > 400", "Chen et al. Drug Metab Dispos 2016"
-            
-        # 2. 活性代謝物警示 (Carboxylic acid -> Acyl-glucuronide)
-        if Fragments.fr_COO(mol) > 0:
-            return "Moderate", "Contains carboxylic acid (potential reactive metabolite)", "Structural Alert"
-            
-        return "Low", "Properties within safe range", "Rule-based prediction"
-
-    @staticmethod
-    def predict_bbb(mol):
-        # BOILED-Egg 邏輯
-        logp = Descriptors.MolLogP(mol)
-        tpsa = Descriptors.TPSA(mol)
-        
-        if tpsa < 79 and 0.4 < logp < 6.0:
-            return "High", "Yellow Zone (Optimal for CNS)", "Daina & Zoete ChemMedChem 2016"
-        elif tpsa < 120:
-            return "Moderate", "White Zone (Peripheral)", "BOILED-Egg Model"
-        else:
-            return "Low", "Outside Egg (Poor Penetration)", "BOILED-Egg Model"
-
-# --- 4. 運算與工具函式 ---
-
-# A. 專利比對 (即時計算)
-PATENT_REF_SMILES = {
-    "Donepezil (US4895841)": "COc1ccc2cc1Oc1cc(cc(c1)C(F)(F)F)CC(=O)N2CCCCc1cccnc1",
-    "Memantine (US4122193)": "CC12CC3CC(C1)(CC(C3)(C2)N)C",
-    "Rivastigmine (US4948807)": "CCN(C)C(=O)OC1=CC=CC(=C1)C(C)N(C)C"
-}
-
-def calculate_realtime_fto(target_mol):
-    results = []
-    fp1 = AllChem.GetMorganFingerprintAsBitVect(target_mol, 2, nBits=1024)
-    for name, ref_smiles in PATENT_REF_SMILES.items():
-        ref_mol = Chem.MolFromSmiles(ref_smiles)
-        if ref_mol:
-            fp2 = AllChem.GetMorganFingerprintAsBitVect(ref_mol, 2, nBits=1024)
-            sim_score = DataStructs.TanimotoSimilarity(fp1, fp2)
-            results.append({
-                "Patent": name,
-                "Similarity": sim_score * 100,
-                "Risk": "High" if sim_score > 0.8 else "Low"
-            })
-    results.sort(key=lambda x: x['Similarity'], reverse=True)
-    return results
-
-# B. 綜合屬性計算 (含 Lipinski)
-def calculate_metrics(mol):
-    mw = Descriptors.MolWt(mol)
-    logp = Descriptors.MolLogP(mol)
-    hbd = Descriptors.NumHDonors(mol)
-    hba = Descriptors.NumHAcceptors(mol)
-    
-    # Lipinski Rule of 5 Check
-    violations = 0
-    if mw > 500: violations += 1
-    if logp > 5: violations += 1
-    if hbd > 5: violations += 1
-    if hba > 10: violations += 1
-    
-    return {
-        "mw": mw, "logp": logp, "tpsa": Descriptors.TPSA(mol),
-        "hbd": hbd, "hba": hba, "qed": QED.qed(mol),
-        "ro5_violations": violations,
-        "in_egg": (Descriptors.TPSA(mol) < 79 and 0.4 < logp < 6.0)
-    }
-
-# C. PubChem 連線
-def get_live_compound(query):
-    try:
-        mol = Chem.MolFromSmiles(query)
-        if mol: return {"name": "User Input", "smiles": query}, mol
-        c = pcp.get_compounds(query, 'name')
-        if c:
-            s = c[0].isomeric_smiles if c[0].isomeric_smiles else c[0].canonical_smiles
-            return {"name": query, "smiles": s}, Chem.MolFromSmiles(s)
-    except: return None, None
-    return None, None
-
-# D. 結構優化 (SMARTS)
-TRANSFORMATIONS = {
-    "reduce_lipophilicity": [{"name": "Scaffold Hop (Benzene -> Pyridine)", "smarts": "c1ccccc1>>c1ccncc1"}],
-    "increase_lipophilicity": [{"name": "Methylation (NH -> N-Me)", "smarts": "[nH1:1]>>[n:1](C)"}]
-}
-
-def apply_live_transformation(mol, logp):
-    strategy = "reduce_lipophilicity" if logp > 3.0 else "increase_lipophilicity"
-    for t in TRANSFORMATIONS[strategy]:
-        rxn = AllChem.ReactionFromSmarts(t['smarts'])
         try:
-            ps = rxn.RunReactants((mol,))
-            if ps:
-                new_mol = ps[0][0]
-                Chem.SanitizeMol(new_mol)
-                return new_mol, t['name']
-        except: continue
-    return mol, "Stereoisomer Adjustment"
-
-def generate_3d_block(mol):
-    try:
-        m = Chem.AddHs(mol)
-        AllChem.EmbedMolecule(m, AllChem.ETKDGv2())
-        return Chem.MolToPDBBlock(m)
-    except: return None
-
-# --- 5. UI 主程式 ---
-
-c1, c2 = st.columns([3, 1])
-with c1:
-    st.markdown('# MedChem <span style="color:#3b82f6">Pro</span> <span class="enterprise-badge">R&D V29.0</span>', unsafe_allow_html=True)
-    st.caption("Integrated Research Platform | RDKit Core | Rule-based ADMET")
-with c2:
-    st.markdown('<div style="text-align:right; color:#4ade80; padding-top:20px;">⚡ Live Engine</div>', unsafe_allow_html=True)
-
-# 內部使用警示 (來自 app_internal.py 的概念)
-st.markdown("""
-<div class="internal-warning">
-    ⚠️ INTERNAL R&D USE ONLY - NOT FOR REGULATORY SUBMISSION<br
-</div>
-""", unsafe_allow_html=True)
-
-with st.sidebar:
-    st.header("🔍 即時檢索")
-    search_input = st.text_input("輸入藥名 / SMILES", "Caffeine")
-    run_btn = st.button("🚀 執行運算")
+            # 如果提供化合物 ChEMBL ID
+            if chembl_id:
+                # 取得化合物詳情
+                compound_data = self.chembl_compounds.get(chembl_id)
+                if compound_data:
+                    results["compounds"].append({
+                        "chembl_id": chembl_id,
+                        "name": compound_data.get('pref_name', 'N/A'),
+                        "smiles": compound_data.get('molecule_structures', {}).get('canonical_smiles', ''),
+                        "properties": compound_data.get('molecule_properties', {})
+                    })
+                    
+                    # 查詢相關生物活性
+                    bioacts = self.chembl_bioactivities.filter(
+                        molecule_chembl_id=chembl_id,
+                        type__in=["IC50", "Ki", "Kd", "EC50"],
+                        relation__in=["=", "<"]
+                    ).only("type", "standard_value", "standard_units", 
+                           "target_chembl_id", "assay_chembl_id", "activity_comment")
+                    
+                    for bio in bioacts[:20]:  # 限制前20筆
+                        results["bioactivities"].append({
+                            "type": bio.get('type'),
+                            "value": bio.get('standard_value'),
+                            "units": bio.get('standard_units'),
+                            "target_id": bio.get('target_chembl_id'),
+                            "assay_id": bio.get('assay_chembl_id'),
+                            "comment": bio.get('activity_comment')
+                        })
+            
+            # 如果提供標靶名稱（如 EGFR, AChE）
+            elif target_name:
+                targets = self.chembl_targets.search(target_name)
+                if targets:
+                    target = targets[0]
+                    target_id = target['target_chembl_id']
+                    results["targets"].append({
+                        "chembl_id": target_id,
+                        "name": target.get('pref_name'),
+                        "type": target.get('target_type'),
+                        "organism": target.get('organism')
+                    })
+                    
+                    # 查詢該標靶的所有活性化合物
+                    bioacts = self.chembl_bioactivities.filter(
+                        target_chembl_id=target_id,
+                        type="IC50",
+                        relation="="
+                    ).only("molecule_chembl_id", "standard_value", "standard_units")
+                    
+                    # 取得唯一化合物清單
+                    unique_compounds = list(set([b['molecule_chembl_id'] for b in bioacts]))
+                    
+                    # 批次查詢化合物資訊
+                    for comp_id in unique_compounds[:10]:
+                        comp_data = self.chembl_compounds.get(comp_id)
+                        if comp_data:
+                            results["compounds"].append({
+                                "chembl_id": comp_id,
+                                "name": comp_data.get('pref_name', 'N/A'),
+                                "smiles": comp_data.get('molecule_structures', {}).get('canonical_smiles', '')
+                            })
+                            
+        except Exception as e:
+            st.error(f"ChEMBL 查詢錯誤: {e}")
+            
+        return results
     
-    st.markdown("---")
-    st.markdown("### Settings")
-    st.checkbox("Use Live PubChem", value=True, disabled=True)
-    st.checkbox("Show 3D Viewer", value=True)
-
-if run_btn and search_input:
-    with st.spinner(f"正在連線 PubChem 解析 '{search_input}'..."):
-        data, mol = get_live_compound(search_input)
+    # --- 3. UniChem 交叉引用查詢 ---
+    def query_unichem_crossref(self, identifier, id_type="inchikey"):
+        """
+        使用 UniChem 查詢化合物在多個資料庫的交叉引用
+        支援: inchikey, inchi, smiles
+        """
+        try:
+            payload = {
+                "type": id_type,
+                "compound": identifier
+            }
+            
+            response = requests.post(
+                self.unichem_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                cross_refs = []
+                
+                if 'compounds' in data:
+                    for compound in data['compounds']:
+                        for source in compound.get('sources', []):
+                            cross_refs.append({
+                                "database": source.get('name'),
+                                "id_in_source": source.get('compoundId'),
+                                "url": source.get('url'),
+                                "short_name": source.get('shortName')
+                            })
+                
+                return {
+                    "query": identifier,
+                    "total_sources": len(cross_refs),
+                    "cross_references": cross_refs,
+                    "uci": compound.get('uci') if 'compounds' in data and data['compounds'] else None
+                }
+            else:
+                return None
+                
+        except Exception as e:
+            st.error(f"UniChem 查詢錯誤: {e}")
+            return None
+    
+    # --- 4. PubChem PUG REST 進階查詢 ---
+    def query_pubchem_advanced(self, cid, properties=None):
+        """
+        使用 PubChem PUG REST API 取得特定屬性
+        """
+        if properties is None:
+            properties = ["MolecularWeight", "XLogP", "TPSA", "Complexity"]
         
-    if not mol:
-        st.error(f"❌ 錯誤：無法解析 '{search_input}'。請確認拼字或網路狀態。")
-    else:
-        # --- 核心運算 ---
-        with st.spinner("RDKit 正在計算屬性與 ADMET 規則..."):
-            start_time = time.time()
+        prop_str = ",".join(properties)
+        url = f"{self.pubchem_rest}/compound/cid/{cid}/property/{prop_str}/JSON"
+        
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return response.json()['PropertyTable']['Properties'][0]
+            return None
+        except:
+            return None
+    
+    # --- 5. 結構相似性搜尋 (PubChem) ---
+    def search_pubchem_similarity(self, smiles, threshold=90, max_records=20):
+        """
+        在 PubChem 中搜尋結構相似化合物
+        threshold: Tanimoto 相似度閾值 (0-100)
+        """
+        try:
+            # 使用 PubChem PUG REST 進行相似性搜尋
+            url = f"{self.pubchem_rest}/compound/fastsimilarity_2d/smiles/{requests.utils.quote(smiles)}/cids/JSON"
+            params = {"Threshold": threshold, "MaxRecords": max_records}
             
-            # 1. 基礎屬性
-            metrics = calculate_metrics(mol)
+            response = requests.get(url, params=params, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                cids = data.get('IdentifierList', {}).get('CID', [])
+                
+                similar_compounds = []
+                for cid in cids[:max_records]:
+                    comp_info = self.query_pubchem_live(str(cid), "cid")
+                    if comp_info:
+                        similar_compounds.append(comp_info)
+                
+                return similar_compounds
+            return []
+        except Exception as e:
+            st.error(f"相似性搜尋錯誤: {e}")
+            return []
+
+# ==================== 強化版 Streamlit UI ====================
+
+def main():
+    st.set_page_config(
+        page_title="MedChem Pro | Live Database Edition", 
+        page_icon="🧬", 
+        layout="wide"
+    )
+    
+    # 初始化 API 連接器
+    if 'api' not in st.session_state:
+        st.session_state.api = PublicDatabaseAPI()
+    
+    st.title("🧬 MedChem Pro - 即時公開資料庫版")
+    st.markdown("即時連線 **PubChem** | **ChEMBL** | **UniChem**")
+    
+    # 側邊欄搜尋
+    with st.sidebar:
+        st.header("🔍 多資料庫搜尋")
+        
+        search_type = st.selectbox(
+            "搜尋類型",
+            ["化合物名稱", "SMILES", "InChIKey", "ChEMBL ID", "標靶名稱"]
+        )
+        
+        search_input = st.text_input("輸入搜尋內容", "Aspirin")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            search_btn = st.button("🚀 搜尋", use_container_width=True)
+        with col2:
+            similarity_search = st.checkbox("相似性搜尋")
+        
+        st.markdown("---")
+        st.markdown("### 資料庫狀態")
+        st.success("🟢 PubChem: 連線中")
+        st.success("🟢 ChEMBL: 連線中")
+        st.success("🟢 UniChem: 連線中")
+    
+    if search_btn and search_input:
+        api = st.session_state.api
+        
+        with st.spinner("正在查詢多個公開資料庫..."):
+            progress_bar = st.progress(0)
             
-            # 2. ADMET 規則引擎 (使用 FreeADMETRules)
-            admet = FreeADMETRules()
-            herg_risk, herg_desc, herg_ref = admet.predict_herg(mol)
-            liver_risk, liver_desc, liver_ref = admet.predict_liver(mol)
-            bbb_risk, bbb_desc, bbb_ref = admet.predict_bbb(mol)
-            
-            # 3. FTO & 優化
-            fto_results = calculate_realtime_fto(mol)
-            opt_mol, opt_strategy = apply_live_transformation(mol, metrics['logp'])
-            
-            calc_time = time.time() - start_time
-
-        st.success(f"✅ 運算完成 (耗時: {calc_time:.3f} 秒)")
-
-        # --- Tab 介面 ---
-        tab1, tab2, tab3 = st.tabs(["🔬 科學核心 (Scientific)", "🧠 結構優化 (Optimization)", "☠️ 毒理與專利 (Evidence)"])
-
-        # Tab 1: 科學核心
-        with tab1:
-            st.markdown("### 1️⃣ 物理化學屬性與 Lipinski 規則")
-            k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("MW", f"{metrics['mw']:.1f}", delta="< 500")
-            k2.metric("LogP", f"{metrics['logp']:.2f}", delta="1-5")
-            k3.metric("TPSA", f"{metrics['tpsa']:.1f}", delta="< 90")
-            k4.metric("HBD", f"{metrics['hbd']}", delta="< 5")
-            k5.metric("Ro5 Violations", f"{metrics['ro5_violations']}", 
-                      delta_color="inverse" if metrics['ro5_violations'] > 0 else "normal")
-
-            # Lipinski 狀態條
-            if metrics['ro5_violations'] == 0:
-                st.success("✅ 符合 Lipinski Rule of 5 (口服吸收性佳)")
+            # 1. PubChem 查詢
+            progress_bar.progress(25)
+            if search_type == "化合物名稱":
+                pubchem_data = api.query_pubchem_live(search_input, "name")
+            elif search_type == "SMILES":
+                pubchem_data = api.query_pubchem_live(search_input, "smiles")
+            elif search_type == "InChIKey":
+                pubchem_data = api.query_pubchem_live(search_input, "inchikey")
             else:
-                st.warning(f"⚠️ 違反 {metrics['ro5_violations']} 項 Lipinski 規則，可能影響生物利用度")
-
-            # BOILED-Egg
-            c_chart, c_desc = st.columns([2, 1])
-            with c_chart:
-                fig = go.Figure()
-                fig.add_shape(type="circle", xref="x", yref="y", x0=0, y0=0, x1=6, y1=140,
-                    fillcolor="rgba(255, 204, 0, 0.2)", line_color="rgba(255, 204, 0, 0.5)")
-                fig.add_trace(go.Scatter(
-                    x=[metrics['logp']], y=[metrics['tpsa']], mode='markers+text',
-                    marker=dict(size=18, color='#4ade80' if metrics['in_egg'] else '#f87171'),
-                    text=["Input"], textposition="top center"
-                ))
-                fig.update_layout(xaxis_title="WLOGP", yaxis_title="TPSA", plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'), height=300, margin=dict(t=20, b=20))
-                st.plotly_chart(fig, use_container_width=True)
+                pubchem_data = None
             
-            with c_desc:
-                st.markdown(f"""
-                <div style="background:rgba(30,41,59,0.5); padding:15px; border-radius:10px; border:1px solid rgba(255,255,255,0.1);">
-                    <h4 style="color:#fcd34d; margin:0;">🧠 BBB 預測: {bbb_risk}</h4>
-                    <p style="font-size:0.9rem; color:#cbd5e1;">{bbb_desc}</p>
-                    <p style="font-size:0.8rem; color:#94a3b8;">Ref: {bbb_ref}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-        # Tab 2: 結構優化
-        with tab2:
-            st.markdown("### 2️⃣ AI 結構優化建議")
-            st.info(f"💡 **AI 策略:** {opt_strategy} (Based on LogP={metrics['logp']:.2f})")
+            # 2. ChEMBL 查詢
+            progress_bar.progress(50)
+            if search_type == "標靶名稱":
+                chembl_data = api.query_chembl_bioactivity(target_name=search_input)
+            elif search_type == "ChEMBL ID":
+                chembl_data = api.query_chembl_bioactivity(chembl_id=search_input)
+            else:
+                chembl_data = api.query_chembl_bioactivity(compound_name=search_input)
             
-            c1, c2 = st.columns(2)
-            with c1:
-                st.caption("原始結構 (3D Live)")
-                v1 = py3Dmol.view(width=400, height=300)
-                v1.addModel(generate_3d_block(mol), 'pdb')
-                v1.setStyle({'stick': {}})
-                v1.zoomTo()
-                showmol(v1, height=300, width=400)
-            with c2:
-                st.caption(f"優化模擬: {opt_strategy}")
-                v2 = py3Dmol.view(width=400, height=300)
-                v2.addModel(generate_3d_block(opt_mol), 'pdb')
-                v2.setStyle({'stick': {'colorscheme': 'greenCarbon'}})
-                v2.zoomTo()
-                showmol(v2, height=300, width=400)
-
-        # Tab 3: 毒理與專利 (使用規則引擎)
-        with tab3:
-            st.markdown("### 3️⃣ ADMET 風險評估 (Rule-based)")
+            # 3. UniChem 交叉引用
+            progress_bar.progress(75)
+            unichem_data = None
+            if pubchem_data and pubchem_data.get('inchikey'):
+                unichem_data = api.query_unichem_crossref(pubchem_data['inchikey'], "inchikey")
             
-            col_h, col_l = st.columns(2)
+            # 4. 相似性搜尋
+            similar_compounds = []
+            if similarity_search and pubchem_data and pubchem_data.get('smiles'):
+                similar_compounds = api.search_pubchem_similarity(pubchem_data['smiles'])
             
-            # hERG 卡片 (使用 FreeADMETRules)
-            with col_h:
-                color_h = "risk-high" if herg_risk == "High" else "risk-medium" if herg_risk == "Moderate" else "risk-low"
-                border_h = "#ef4444" if herg_risk == "High" else "#f59e0b" if herg_risk == "Moderate" else "#10b981"
+            progress_bar.progress(100)
+            time.sleep(0.5)
+            progress_bar.empty()
+        
+        # ==================== 結果展示 ====================
+        
+        if pubchem_data:
+            st.success(f"✅ 成功從 **{pubchem_data['source']}** 取得資料")
+            
+            # 頂部資訊卡
+            cols = st.columns(4)
+            cols[0].metric("PubChem CID", pubchem_data['cid'])
+            cols[1].metric("分子量", f"{pubchem_data['molecular_weight']:.2f}")
+            cols[2].metric("XLogP", pubchem_data['xlogp'] if pubchem_data['xlogp'] else "N/A")
+            cols[3].metric("TPSA", pubchem_data['tpsa'] if pubchem_data['tpsa'] else "N/A")
+            
+            # Tab 介面
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📊 基礎資訊", 
+                "🧬 ChEMBL 生物活性", 
+                "🔗 UniChem 交叉引用",
+                "🔍 相似化合物"
+            ])
+            
+            with tab1:
+                col_left, col_right = st.columns([2, 1])
                 
-                st.markdown(f"""
-                <div style="background: rgba(30,41,59,0.7); border-radius: 12px; padding: 20px; border-top: 4px solid {border_h};">
-                    <h4 style="margin:0;">🫀 心臟毒性 (hERG)</h4>
-                    <p class="{color_h}" style="font-size:1.2rem;">Risk: {herg_risk}</p>
-                    <p style="font-size:0.9rem; color:#e2e8f0;">{herg_desc}</p>
-                    <hr style="border-color: rgba(255,255,255,0.1);">
-                    <p style="font-size:0.8rem; color:#94a3b8;">📚 Ref: {herg_ref}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # Liver 卡片 (使用 FreeADMETRules)
-            with col_l:
-                color_l = "risk-high" if liver_risk == "High" else "risk-medium" if liver_risk == "Moderate" else "risk-low"
-                border_l = "#ef4444" if liver_risk == "High" else "#f59e0b" if liver_risk == "Moderate" else "#10b981"
+                with col_left:
+                    st.markdown("### 化合物詳情")
+                    info_df = pd.DataFrame([
+                        ["IUPAC 名稱", pubchem_data['name']],
+                        ["分子式", pubchem_data['molecular_formula']],
+                        ["SMILES", pubchem_data['smiles']],
+                        ["InChIKey", pubchem_data['inchikey']],
+                        ["精確質量", pubchem_data['exact_mass']],
+                        ["複雜度", pubchem_data['complexity']],
+                        ["氫鍵供體", pubchem_data['hbond_donor']],
+                        ["氫鍵受體", pubchem_data['hbond_acceptor']],
+                        ["可旋轉鍵", pubchem_data['rotatable_bonds']]
+                    ], columns=["屬性", "數值"])
+                    
+                    st.dataframe(info_df, use_container_width=True, hide_index=True)
+                    
+                    if pubchem_data.get('synonyms'):
+                        st.markdown("### 同義詞")
+                        st.write(", ".join(pubchem_data['synonyms']))
                 
-                st.markdown(f"""
-                <div style="background: rgba(30,41,59,0.7); border-radius: 12px; padding: 20px; border-top: 4px solid {border_l};">
-                    <h4 style="margin:0;">🧪 肝臟毒性 (DILI)</h4>
-                    <p class="{color_l}" style="font-size:1.2rem;">Risk: {liver_risk}</p>
-                    <p style="font-size:0.9rem; color:#e2e8f0;">{liver_desc}</p>
-                    <hr style="border-color: rgba(255,255,255,0.1);">
-                    <p style="font-size:0.8rem; color:#94a3b8;">📚 Ref: {liver_ref}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("#### ⚖️ FTO 專利相似度 (Fingerprint)")
-            if fto_results:
-                top_match = fto_results[0]
-                st.metric("最相似專利", top_match['Patent'], f"{top_match['Similarity']:.2f}%")
-                if top_match['Similarity'] > 80:
-                    st.warning("⚠️ 結構與已知專利高度相似，請注意侵權風險。")
+                with col_right:
+                    # 顯示 2D 結構（使用 PubChem 圖片）
+                    if pubchem_data['cid']:
+                        img_url = f"https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid={pubchem_data['cid']}&width=300&height=300"
+                        st.image(img_url, caption="PubChem 2D 結構")
+                    
+                    st.markdown(f"[🔗 在 PubChem 查看]({pubchem_data['url']})")
+            
+            with tab2:
+                if chembl_data and (chembl_data['compounds'] or chembl_data['bioactivities']):
+                    st.markdown("### ChEMBL 數據")
+                    
+                    if chembl_data['targets']:
+                        st.markdown("**標靶資訊：**")
+                        for t in chembl_data['targets']:
+                            st.write(f"- {t['name']} ({t['chembl_id']}) | {t['organism']}")
+                    
+                    if chembl_data['bioactivities']:
+                        st.markdown("**生物活性數據：**")
+                        bio_df = pd.DataFrame(chembl_data['bioactivities'])
+                        st.dataframe(bio_df, use_container_width=True)
+                    else:
+                        st.info("未找到生物活性數據")
                 else:
-                    st.success("✅ 與主要專利結構差異大 (FTO Clear)。")
-            else:
-                st.info("無高度相似專利。")
+                    st.info("ChEMBL 中無此化合物數據")
+            
+            with tab3:
+                if unichem_data:
+                    st.markdown(f"### 找到 {unichem_data['total_sources']} 個資料庫交叉引用")
+                    
+                    if unichem_data['cross_references']:
+                        ref_df = pd.DataFrame(unichem_data['cross_references'])
+                        st.dataframe(ref_df[['database', 'id_in_source', 'url']], 
+                                   use_container_width=True)
+                        
+                        # 視覺化資料庫分布
+                        db_counts = ref_df['database'].value_counts()
+                        st.bar_chart(db_counts)
+                else:
+                    st.info("未找到交叉引用數據")
+            
+            with tab4:
+                if similarity_search:
+                    if similar_compounds:
+                        st.markdown(f"### 找到 {len(similar_compounds)} 個相似化合物")
+                        
+                        sim_cols = st.columns(3)
+                        for idx, sim_comp in enumerate(similar_compounds[:6]):
+                            with sim_cols[idx % 3]:
+                                sim_img = f"https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid={sim_comp['cid']}&width=200&height=200"
+                                st.image(sim_img, caption=f"{sim_comp['name'][:30]}...")
+                                st.caption(f"CID: {sim_comp['cid']}")
+                    else:
+                        st.info("未找到相似化合物")
+                else:
+                    st.info("請在側邊欄勾選「相似性搜尋」")
+        
+        else:
+            st.error("❌ 無法在公開資料庫中找到該化合物")
+
+if __name__ == "__main__":
+    main()
