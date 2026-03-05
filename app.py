@@ -195,42 +195,44 @@ class PublicDatabaseAPI:
         return [{"Target": "擴大搜尋後仍無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 
     def get_modification_suggestions(self, result):
-        """【藥化專家系統】基於結構指紋與 CNS MPO 的深度運算"""
+        """【藥化專家系統】基於結構指紋與 CNS MPO 的深度實時運算"""
         from rdkit.Chem import Fragments, Descriptors
         mol = Chem.MolFromSmiles(result['smiles'])
+        if not mol: return ["❌ 分子結構解析失敗"]
         
         logp, tpsa = result['logp'], result['tpsa']
         suggestions = []
         
-        # 1. 執行結構特徵偵測 (這就是 Grasyon 判斷差異的關鍵)
-        oh_count = Fragments.fr_OH(mol)      # 偵測羥基數量
-        nh_count = Fragments.fr_NH0(mol) + Fragments.fr_NH1(mol) + Fragments.fr_NH2(mol) # 偵測胺基
-        f_count = result['smiles'].upper().count('F') # 偵測氟原子
-        has_acid = Fragments.fr_COO(mol) > 0 # 偵測是否有羧酸根 (BBB 大忌)
+        # 1. 執行結構特徵偵測 (與 Grasyon 判斷一致的核心：看官能基)
+        oh_count = Fragments.fr_OH(mol)      # 偵測羥基 (-OH)
+        # 偵測胺基 (含一級、二級、三級胺)
+        nh_count = Fragments.fr_NH0(mol) + Fragments.fr_NH1(mol) + Fragments.fr_NH2(mol) 
+        f_count = result['smiles'].upper().count('F') # 偵測氟原子 (F)
+        has_acid = Fragments.fr_COO(mol) > 0 # 偵測是否有羧酸根 (-COOH)
 
-        # 2. 計算 CNS MPO 基礎分數 (實時運算)
+        # 2. 計算實時 CNS MPO 基礎分數
         mpo_score = 0
         if 1.0 < logp < 3.0: mpo_score += 1.0
-        if tpsa < 70: mpo_score += 1.0
+        if tpsa < 75: mpo_score += 1.0
         if Descriptors.NumHDonors(mol) <= 1: mpo_score += 1.0
 
         suggestions.append(f"📊 **實時 CNS MPO 指數: {mpo_score}/3.0**")
 
-        # 3. 根據「特定結構特徵」給予高度差異化的藥化策略
+        # 3. 根據「特定結構特徵」給予高度差異化的藥化策略 (MedChem Logic)
         if has_acid:
-            suggestions.append("🚫 **結構性瓶頸**: 偵測到羧酸根 (Carboxylic acid)。這在生理 pH 下帶負電，極難入腦。")
-            suggestions.append("🔹 **策略**: 建議將其轉化為酯類前藥 (Prodrug) 或置換為四唑 (Tetrazole) 以優化分佈。")
+            suggestions.append("🚫 **結構性瓶頸**: 偵測到羧酸根。在生理 pH 下帶負電，極難穿透血腦屏障 (BBB)。")
+            suggestions.append("🔹 **藥化策略**: 建議將其轉化為酯類前藥 (Prodrug) 或使用生物電子等排體 (Bioisostere) 置換。")
         
         if oh_count > 2:
-            suggestions.append(f"⚠️ **氫鍵給體過剩**: 分子含有 {oh_count} 個羥基，去溶劑化能障極高。")
-            suggestions.append("🔹 **策略**: 嘗試將部分 -OH 進行烷基化或隱藏在內氫鍵中。")
+            suggestions.append(f"⚠️ **極性基團過剩**: 含有 {oh_count} 個羥基，會顯著增加去溶劑化能障。")
+            suggestions.append("🔹 **藥化策略**: 嘗試減少非必要的 -OH 或進行烷基化修飾，以降低 TPSA。")
 
         if f_count == 0 and logp < 2.0:
-            suggestions.append("💡 **親脂性優化空間**: 目前分子結構缺乏氟原子。")
-            suggestions.append("🔹 **策略**: 引入 **氟原子 (F)** 可同時提升代謝穩定性並微調親脂性，這是 AD 藥物常見做法。")
+            suggestions.append("💡 **親脂性優化空間**: 目前結構缺乏氟原子。")
+            suggestions.append("🔹 **藥化策略**: 引入 **氟原子 (F)** 可提升代謝穩定性並增加脂溶性，有助於 EAAT2 調節劑入腦。")
 
         if mpo_score >= 2.5 and not has_acid:
-            suggestions.append("✅ **結構參數理想**: 該分子的物化輪廓與成功入腦的中樞神經藥物高度契合。")
+            suggestions.append("✅ **結構參數理想**: 該分子的理化輪廓與成功入腦的神經藥物高度契合。")
             
         return suggestions
 # ==================== ADMET 規則引擎 ====================
