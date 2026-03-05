@@ -397,7 +397,6 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
             
         with c_3d:
-            # 使用 py3Dmol 進行分子 3D 可視化
             v1 = py3Dmol.view(width=400, height=300)
             pdb_data = generate_3d_pdb(mol)
             if pdb_data:
@@ -407,6 +406,13 @@ def main():
                 showmol(v1, height=300, width=400)
             else:
                 st.warning("無法生成 3D 結構")
+
+        # === 區塊 4: ADMET 風險評估 (修正縮排處) ===
+        st.markdown("### 4️⃣ ADMET Risk Assessment")
+        # 呼叫我們先前編寫的實時決策引擎 (含 P-gp 排出與 MPO 運算)
+        mod_suggestions = public_api.get_modification_suggestions(result)
+        for advice in mod_suggestions:
+            st.info(advice)
                     
                     # === 區塊 4: ADMET 規則引擎 ===
                     st.markdown("### 4️⃣ ADMET Risk Assessment")
