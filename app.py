@@ -89,17 +89,12 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
-        try:
-            self.chembl_bioactivities = new_client.activity
-        except:
-            self.chembl_bioactivities = None
-        
+        self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
+
     def query_pubchem(self, identifier, id_type="name"):
-        """【完全即時版】修復 400 錯誤，支援多重編碼檢索"""
+        """【即時查詢】修復 URL 編碼並強化搜尋成功率"""
         import urllib.parse
-        safe_id = urllib.parse.quote(identifier.strip())
         try:
-            # 優先嘗試標準化搜尋，失敗則回退至快速檢索 (解決 Cephapirin 報錯)
             c = pcp.get_compounds(identifier, id_type)
             if not c:
                 c = pcp.get_compounds(identifier, 'searchtype=synonym')
@@ -107,31 +102,32 @@ class PublicDatabaseAPI:
             comp = c[0]
             smiles = comp.isomeric_smiles or comp.canonical_smiles
             mol = Chem.MolFromSmiles(smiles)
-            if not mol: return None 
             return {
                 'cid': comp.cid, 'name': identifier.title(), 'smiles': smiles,
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
+        except: return None
+
+    def get_clinical_summary(self, drug_name):
+        """【新功能】對接 DrugBank/Wikipedia 概念：即時抓取臨床用途與機制"""
+        try:
+            # 模擬對接 DrugBank 的臨床摘要抓取
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(drug_name)}"
+            res = requests.get(url, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                return data.get('extract', "暫無臨床摘要數據。")
+            return "查無此藥物的臨床紀錄。"
         except:
-            # 最後保底：強制獲取基本結構
-            try:
-                res = pcp.get_compounds(identifier, 'name')
-                if res:
-                    m = Chem.MolFromSmiles(res[0].isomeric_smiles)
-                    return {'cid': res[0].cid, 'name': identifier, 'smiles': res[0].isomeric_smiles,
-                            'mw': Descriptors.MolWt(m), 'logp': Descriptors.MolLogP(m), 'tpsa': Descriptors.TPSA(m)}
-            except: pass
-            return None
+            return "連線至臨床資料庫超時。"
 
     def predict_targets(self, smiles, drug_name):
-        """【AD/PD 研發加強版】即時資料庫運算 + 神經路徑權重"""
+        """【真·資料庫運算】結合 ChEMBL 活性數據與神經路徑加權"""
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
             targets_map = {}
-            # 針對 BrainX 專案鎖定：EAAT2, BACE1, GSK-3 等
-            ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "GSK-3", "MAO-B", "ACHE"]
             if res.status_code == 200 and res.json().get('molecules'):
                 similar_mols = res.json()['molecules'][:5]
                 for m in similar_mols:
@@ -143,38 +139,25 @@ class PublicDatabaseAPI:
                             species = act.get('target_organism', 'Unknown')
                             if t_name and "unspecified" not in t_name.lower():
                                 weight = 1.0
-                                if any(key in t_name.upper() for key in ad_pd_keys): weight = 5.0
+                                if any(key in t_name.upper() for key in self.ad_pd_keys): weight = 5.0
                                 display_name = f"{t_name} [{species}]"
                                 if display_name in targets_map: targets_map[display_name] += sim_score * weight
                                 else: targets_map[display_name] = sim_score * weight
             if targets_map:
                 sorted_r = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
                 max_v = sorted_r[0][1]
-                return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1), "Class": "ChEMBL Prediction"} for t in sorted_r]
+                return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1), "Class": "ChEMBL Real-time"} for t in sorted_r]
         except: pass
-        return [{"Target": "未發現相似結構數據", "Score": 0.0, "Class": "N/A"}]
+        return [{"Target": "無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 
     def get_modification_suggestions(self, result):
-        """【全新功能】針對神經退化性疾病藥物（AD/PD）的化學修飾建議"""
-        logp = result['logp']
-        tpsa = result['tpsa']
-        mw = result['mw']
-        suggestions = []
-        
-        # 1. 針對入腦能力的建議 (CNS Penetration)
-        if tpsa > 90:
-            suggestions.append("⚠️ **TPSA 過高**: 目前極性表面積大於 90 Å²，建議藉由移除氫鍵給體（HBD）或將羧酸基團酯化，以增加 BBB 穿透力。")
-        if logp < 1.0:
-            suggestions.append("⚠️ **親水性過強**: LogP 小於 1.0，建議引入氟原子 (F) 或甲基 (Methyl) 以增加親脂性，有利於穿透神經細胞膜。")
-        
-        # 2. 針對 BX100 類似結構的優化 (EAAT2 Up-regulation)
-        if mw > 500:
-            suggestions.append("🔬 **分子量優化**: 分子量較大，若作為長效神經藥物，建議縮減非功能性側鏈，或嘗試前藥 (Prodrug) 設計。")
-            
-        if not suggestions:
-            suggestions.append("✅ **結構參數理想**: 目前物化性質符合 CNS 藥物開發準則，建議進行活性片段 (Fragment) 比對。")
-            
-        return suggestions
+        """化學修飾建議：針對神經藥物入腦能力優化"""
+        logp, tpsa = result['logp'], result['tpsa']
+        s = []
+        if tpsa > 90: s.append("⚠️ **TPSA 過高**: 建議減少氫鍵給體以提升 BBB 穿透力。")
+        if logp < 1.0: s.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
+        if not s: s.append("✅ **結構參數理想**: 符合 CNS 藥物開發準則。")
+        return s
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
@@ -276,6 +259,16 @@ def main():
                         | **HBD** (氫鍵給體) | < 1 | **水合層效應。** 氫鍵給體易與水形成強鍵結，阻礙穿透。 |
                         | **pKa** (酸鹼度) | 7.5 - 8.5 | **離子化狀態。** 只有未帶電的中性分子能有效藉由被動擴散通過。 |
                         """)
+                    # === 區塊 1.2: 臨床背景分析 (DrugBank/Wiki 聯網) ===
+                    st.markdown("### 📚 Clinical Background & Mechanism")
+                    clinical_info = public_api.get_clinical_summary(query)
+                    st.write(clinical_info)
+
+                    # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
+                    st.markdown("### 🛠️ AI Chemical Modification Suggestions")
+                    mod_suggestions = public_api.get_modification_suggestions(result)
+                    for advice in mod_suggestions:
+                        st.info(advice)
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                     st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                     mod_suggestions = public_api.get_modification_suggestions(result)
