@@ -329,14 +329,24 @@ def main():
                         | **HBD** (氫鍵給體) | < 1 | **水合層效應。** 氫鍵給體易與水形成強鍵結，阻礙穿透。 |
                         | **pKa** (酸鹼度) | 7.5 - 8.5 | **離子化狀態。** 只有未帶電的中性分子能有效藉由被動擴散通過。 |
                         """)
-                    # === 區塊 1.2: 臨床背景分析 (DrugBank/Wiki 聯網) ===
-                    st.markdown("### 📚 Clinical Background & Mechanism")
-                    clinical_info = public_api.get_clinical_summary(query)
-                    st.write(clinical_info)
-                    # === 區塊 1.3: PubMed 文獻追蹤 (針對 EAAT2 / 神經保護) ===
-                    st.markdown("### 🔬 Related Scientific Publications (PubMed)")
-                    pubmed_results = public_api.get_pubmed_links(query)
-                    st.markdown(pubmed_results)
+                   # === 區塊 1.2: 臨床背景 ===
+        st.markdown("### 📚 Clinical Background & Mechanism")
+        clinical_info = public_api.get_clinical_summary(query)
+        st.write(clinical_info)
+
+        # === 區塊 1.3: PubMed 文獻追蹤 (針對 EAAT2 / 神經保護) ===
+        st.markdown("### 🔬 Related Scientific Publications (PubMed)")
+        pubmed_results = public_api.get_pubmed_details(query)
+        
+        if pubmed_results:
+            # 修正點：下方的內容必須縮進 4 個空格
+            for paper in pubmed_results:
+                st.markdown(f"📄 **{paper['title']}**")
+                st.markdown(f"🔗 [查看原文]({paper['link']})")
+                st.divider()
+        else:
+            st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
+    st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                     st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                     mod_suggestions = public_api.get_modification_suggestions(result)
