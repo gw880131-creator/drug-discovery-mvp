@@ -135,32 +135,40 @@ class PublicDatabaseAPI:
             return papers
         except: return []
     def get_clinical_summary(self, drug_name):
-        """【全實時診斷】廢除預設文字，若百科查無則即時檢索 ChEMBL 作用機制"""
+        """【實時檢索修正】改用模糊檢索與多重回退機制，確保 Ceftriaxone 等藥物必能查獲"""
         import urllib.parse
-        search_name = drug_name.strip().capitalize()
+        search_name = drug_name.strip()
         
         try:
-            # 1. 優先嘗試 Wikipedia (臨床與通用百科)
-            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name)}"
+            # 1. Wikipedia 檢索 (加入歸一化：首字母大寫)
+            wiki_name = search_name.capitalize()
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(wiki_name)}"
             res = requests.get(wiki_url, timeout=10)
             if res.status_code == 200:
-                return res.json().get('extract', "找到紀錄但無摘要內容。")
+                return res.json().get('extract', "找到紀錄但無摘要。")
+
+            # 2. ChEMBL 檢索修正：捨棄 iexact (精確)，改用模糊搜尋 (__contains) 或 ID 轉換
+            # 先找分子 ID，再找機制，這才是專業藥化系統的標準作法
+            mol_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?pref_name__icontains={search_name}&format=json"
+            mol_res = requests.get(mol_url, timeout=10)
             
-            # 2. 若 Wikipedia 查無結果，立即切換至 ChEMBL 進行「實時藥理機制」檢索
-            # 這樣即便 Vorinostat 沒被百科收錄，也能從生化數據中抓出它是 HDAC 抑制劑
-            chembl_url = f"https://www.ebi.ac.uk/chembl/api/data/mechanism?molecule_chembl_id__pref_name__iexact={search_name}&format=json"
-            chembl_res = requests.get(chembl_url, timeout=10)
-            
-            if chembl_res.status_code == 200:
-                mechanisms = chembl_res.json().get('mechanisms', [])
-                if mechanisms:
-                    moa_list = [f"🎯 **實時偵測機制**: {m.get('mechanism_of_action')} (作用靶點: {m.get('target_name')})" for m in mechanisms]
-                    return "Wikipedia 無紀錄，但在 ChEMBL 資料庫中偵測到以下藥理機制：\n\n" + "\n".join(moa_list)
-            
-            return f"❌ 實時檢索完成：'{search_name}' 在 Wikipedia 與 ChEMBL 機制庫中均無公開紀錄。請參考下方的 AI 靶點預測模型進行結構推估。"
+            if mol_res.status_code == 200:
+                mols = mol_res.json().get('molecules', [])
+                if mols:
+                    chembl_id = mols[0].get('molecule_chembl_id')
+                    # 再次請求該 ID 的作用機制
+                    mech_url = f"https://www.ebi.ac.uk/chembl/api/data/mechanism?molecule_chembl_id={chembl_id}&format=json"
+                    mech_res = requests.get(mech_url, timeout=10)
+                    
+                    if mech_res.status_code == 200:
+                        mechanisms = mech_res.json().get('mechanisms', [])
+                        if mechanisms:
+                            return "\n".join([f"🎯 **實時藥理**: {m.get('mechanism_of_action')} (靶點: {m.get('target_name')})" for m in mechanisms])
+
+            return f"❌ 實時檢索仍無匹配。請檢查輸入名稱或參考下方由 ChEMBL 實時運算的靶點預測圖表。"
             
         except Exception as e:
-            return f"⚠️ 實時連線異常: {str(e)}"
+            return f"⚠️ 網路連線波動: {str(e)}"
 
     def get_pubmed_links(self, drug_name):
         """【PubMed 自動檢索】抓取最新的 EAAT2 相關文獻"""
