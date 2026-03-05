@@ -85,93 +85,86 @@ SAFE_DEMO_DB = {
 
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
-    def query_pubchem(self, identifier, id_type="name"):
-        identifier_clean = identifier.lower().strip()
-        if identifier_clean in SAFE_DEMO_DB:
-            smiles = SAFE_DEMO_DB[identifier_clean]
-            mol = Chem.MolFromSmiles(smiles)
-            return {'name': identifier.title(), 'smiles': smiles, 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)}
-        try:
-            c = pcp.get_compounds(identifier, id_type)
-            if not c: return None
-            comp = c[0]
-            mol = Chem.MolFromSmiles(comp.isomeric_smiles or comp.canonical_smiles)
-            if not mol: return None 
-            return {'cid': comp.cid, 'name': comp.iupac_name or (comp.synonyms[0] if comp.synonyms else identifier), 'smiles': Chem.MolToSmiles(mol), 'mw': comp.molecular_weight, 'logp': comp.xlogp, 'tpsa': comp.tpsa}
-        except: return None
-        
-class PublicDatabaseAPI:
     def __init__(self):
-        self.chembl_bioactivities = new_client.activity
+        try:
+            self.chembl_bioactivities = new_client.activity
+        except:
+            self.chembl_bioactivities = None
         
     def query_pubchem(self, identifier, id_type="name"):
-        """強化版 PubChem 查詢，先查本地字典防斷網"""
-        identifier_clean = identifier.lower().strip()
-        if identifier_clean in SAFE_DEMO_DB:
-            smiles = SAFE_DEMO_DB[identifier_clean]
-            mol = Chem.MolFromSmiles(smiles)
-            return {
-                'name': identifier.title(),
-                'smiles': smiles,
-                'mw': Descriptors.MolWt(mol),
-                'logp': Descriptors.MolLogP(mol),
-                'tpsa': Descriptors.TPSA(mol)
-            }
+        """純即時查詢：不使用本地快取，完全連線 PubChem API"""
         try:
             c = pcp.get_compounds(identifier, id_type)
             if not c: return None
             comp = c[0]
+            # 即時利用 RDKit 解析結構以確保後續運算正確性
             mol = Chem.MolFromSmiles(comp.isomeric_smiles or comp.canonical_smiles)
             if not mol: return None 
             return {
                 'cid': comp.cid,
                 'name': comp.iupac_name or (comp.synonyms[0] if comp.synonyms else identifier),
                 'smiles': Chem.MolToSmiles(mol),
-                'mw': comp.molecular_weight,
-                'logp': comp.xlogp,
-                'tpsa': comp.tpsa
+                'mw': Descriptors.MolWt(mol),
+                'logp': Descriptors.MolLogP(mol),
+                'tpsa': Descriptors.TPSA(mol)
             }
         except: return None
 
     def predict_targets(self, smiles, drug_name):
-        """【5 分鐘運算版】配體靶點預測功能"""
-        demo_targets = {
-            "donepezil": [{"Target": "Acetylcholinesterase", "Score": 98.5, "Class": "Enzyme"}, {"Target": "Butyrylcholinesterase", "Score": 75.2, "Class": "Enzyme"}, {"Target": "Sigma-1 receptor", "Score": 45.0, "Class": "Receptor"}],
-            "aspirin": [{"Target": "Cyclooxygenase-1", "Score": 95.0, "Class": "Enzyme"}, {"Target": "Cyclooxygenase-2", "Score": 88.5, "Class": "Enzyme"}],
-            "amoxicillin": [{"Target": "Penicillin-binding protein 1A", "Score": 99.1, "Class": "Bacterial Protein"}, {"Target": "Beta-lactamase", "Score": 60.5, "Class": "Enzyme"}],
-            "ceftriaxone": [
-                {"Target": "GLT-1 (EAAT2) Transporter", "Score": 98.2, "Class": "Transporter (CNS)"},
-                {"Target": "Penicillin-binding protein 3", "Score": 94.5, "Class": "Bacterial Protein"},
-                {"Target": "Penicillin-binding protein 1B", "Score": 88.0, "Class": "Bacterial Protein"},
-                {"Target": "Glutamate receptor ionotropic", "Score": 65.5, "Class": "Receptor"}
-            ]
-        }
+        """【真·即時運算版】完全由 ChEMBL 資料庫相似度演算法產出結果"""
         
-        name_clean = drug_name.lower().strip()
-        for key in demo_targets:
-            if key in name_clean: return demo_targets[key]
-            
+        # 顯示正在執行資料庫檢索的狀態 (於 Logs 或輸出)
+        # 步驟 1: 即時結構指紋比對 (Real-time Similarity Search)
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
+            # 檢索結構相似度 >= 80% 的已知配體
             res = requests.get(f"{base_url}/similarity/{urllib.parse.quote(smiles)}/80?format=json", timeout=300)
-            targets = {}
+            
+            targets_map = {}
+            
             if res.status_code == 200 and res.json().get('molecules'):
-                mols = res.json()['molecules'][:3]
-                for m in mols:
-                    sim = float(m['similarity'])
-                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=10&format=json", timeout=60)
+                similar_mols = res.json()['molecules'][:5] # 取前五大相似結構進行靶點聚合運算
+                
+                for m in similar_mols:
+                    sim_score = float(m['similarity'])
+                    chembl_id = m['molecule_chembl_id']
+                    
+                    # 步驟 2: 抓取該相似分子的所有生物活性實驗紀錄
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=20&format=json", timeout=60)
+                    
                     if act_res.status_code == 200:
-                        for act in act_res.json().get('activities', []):
-                            t_name = act.get('target_pref_name')
-                            if t_name and "unspecified" not in t_name.lower():
-                                if t_name in targets: targets[t_name] += sim * 10
-                                else: targets[t_name] = sim * 50
-            if targets:
-                sorted_t = sorted(targets.items(), key=lambda x: x[1], reverse=True)[:5]
-                return [{"Target": t[0], "Score": min(99.9, t[1]), "Class": "Predicted API"} for t in sorted_t]
-        except: pass
-        return [{"Target": "Novel Target (需進一步實驗驗證)", "Score": 35.0, "Class": "Unknown"}]
-# ==================== ADMET 規則引擎 ====================
+                        activities = act_res.json().get('activities', [])
+                        for act in activities:
+                            target_name = act.get('target_pref_name')
+                            # 過濾無效靶點描述
+                            if target_name and "unspecified" not in target_name.lower():
+                                # 權重演算法：相似度越高、實驗紀錄越多的靶點，信心分數越高
+                                if target_name in targets_map:
+                                    targets_map[target_name] += sim_score * 5
+                                else:
+                                    targets_map[target_name] = sim_score * 20
+                                    
+            if targets_map:
+                # 步驟 3: 將運算結果排序並歸一化為 100 分制
+                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:6]
+                max_score = sorted_results[0][1]
+                
+                output = []
+                for t_name, raw_score in sorted_results:
+                    normalized_score = (raw_score / max_score) * 99.5
+                    output.append({
+                        "Target": t_name,
+                        "Score": round(normalized_score, 1),
+                        "Class": "Calculated via Ligand Similarity"
+                    })
+                return output
+                
+        except Exception as e:
+            # 若連線中斷，則會進入此保護區塊
+            st.error(f"資料庫連線超時，請稍後再試。原因: {str(e)}")
+            
+        # 步驟 4: 若資料庫中查無相似分子，回傳真實的「無相似結構」結果
+        return [{"Target": "Database Search: No Similar Ligands Found", "Score": 0.0, "Class": "N/A"}]
 class FreeADMETRules:
     @staticmethod
     def predict_herg(mol):
