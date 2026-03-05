@@ -339,65 +339,74 @@ def main():
         pubmed_results = public_api.get_pubmed_details(query)
         
         if pubmed_results:
-            # 修正點：下方的內容必須縮進 4 個空格
             for paper in pubmed_results:
                 st.markdown(f"📄 **{paper['title']}**")
                 st.markdown(f"🔗 [查看原文]({paper['link']})")
                 st.divider()
         else:
-                st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
-                st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
-                    # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
-                st.markdown("### 🛠️ AI Chemical Modification Suggestions")
-                mod_suggestions = public_api.get_modification_suggestions(result)
-                for advice in mod_suggestions:
-                        st.info(advice)
-                   # === 區塊 2: AI 靶點預測與文獻連動 ===
-                    st.markdown("### 🎯 2️⃣ AI Target Prediction & PubMed Evidence")
-                    
-                    col_chart, col_papers = st.columns([3, 2])
-                    
-                    with col_chart:
-                        targets_data = public_api.predict_targets(result['smiles'], result['name'])
-                        if targets_data:
-                            df_targets = pd.DataFrame(targets_data)
-                            fig_t = px.bar(df_targets, x="Score", y="Target", orientation='h', 
-                                           color="Score", color_continuous_scale="Blues")
-                            fig_t.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-                            st.plotly_chart(fig_t, use_container_width=True)
-                        else:
-                            st.warning("目前資料庫無相似活性紀錄。")
-                            
-                    with col_papers:
-                        st.markdown("#### 🔬 Latest Evidence (PubMed)")
-                        paper_list = public_api.get_pubmed_details(query)
-                        if paper_list:
-                            for paper in paper_list:
-                                st.markdown(f"📄 **{paper['title']}**")
-                                st.markdown(f"🔗 [查看原文]({paper['link']})")
-                                st.divider()
-                        else:
-                            st.info("暫無直接關聯之 EAAT2 相關文獻。")
-                    
-                    # === 區塊 3: BOILED-Egg & 3D Viewer ===
-                    st.markdown("### 3️⃣ BBB Penetration & 3D Structure")
-                    c_chart, c_3d = st.columns(2)
-                    with c_chart:
-                        fig = go.Figure()
-                        fig.add_shape(type="circle", xref="x", yref="y", x0=0, y0=0, x1=6, y1=140, fillcolor="rgba(255, 204, 0, 0.2)", line_color="rgba(255, 204, 0, 0.5)")
-                        fig.add_trace(go.Scatter(x=[result['logp']], y=[result['tpsa']], mode='markers+text', marker=dict(size=18, color='#3b82f6'), text=[result['name']], textposition="top center"))
-                        fig.update_layout(xaxis_title="WLOGP", yaxis_title="TPSA", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='#1e293b'), height=350, margin=dict(t=20, b=20))
-                        st.plotly_chart(fig, use_container_width=True)
-                    with c_3d:
-                        v1 = py3Dmol.view(width=400, height=300)
-                        pdb_data = generate_3d_pdb(mol)
-                        if pdb_data:
-                            v1.addModel(pdb_data, 'pdb')
-                            v1.setStyle({'stick': {}})
-                            v1.zoomTo()
-                            showmol(v1, height=300, width=400)
-                        else:
-                            st.warning("無法生成 3D 結構")
+            st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
+
+        # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
+        st.markdown("### 🛠️ AI Chemical Modification Suggestions")
+        mod_suggestions = public_api.get_modification_suggestions(result)
+        for advice in mod_suggestions:
+            st.info(advice)
+
+        # === 區塊 2: AI 靶點預測與文獻連動 ===
+        st.markdown("### 🎯 2️⃣ AI Target Prediction & PubMed Evidence")
+        
+        col_chart, col_papers = st.columns([3, 2])
+        
+        with col_chart:
+            targets_data = public_api.predict_targets(result['smiles'], result['name'])
+            if targets_data:
+                df_targets = pd.DataFrame(targets_data)
+                fig_t = px.bar(df_targets, x="Score", y="Target", orientation='h', 
+                               color="Score", color_continuous_scale="Blues")
+                fig_t.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+                st.plotly_chart(fig_t, use_container_width=True)
+            else:
+                st.warning("目前資料庫無相似活性紀錄。")
+                
+        with col_papers:
+            st.markdown("#### 🔬 Latest Evidence (PubMed)")
+            # 這裡我們重複使用剛剛抓到的 pubmed_results
+            if pubmed_results:
+                for paper in pubmed_results:
+                    st.markdown(f"📄 **{paper['title']}**")
+                    st.markdown(f"🔗 [查看原文]({paper['link']})")
+                    st.divider()
+            else:
+                st.info("暫無直接關聯之 EAAT2 相關文獻。")
+        
+        # === 區塊 3: BOILED-Egg & 3D Viewer ===
+        st.markdown("### 3️⃣ BBB Penetration & 3D Structure")
+        c_chart, c_3d = st.columns(2)
+        
+        with c_chart:
+            fig = go.Figure()
+            # 繪製 BOILED-Egg 區域 (BBB 穿透範圍)
+            fig.add_shape(type="circle", xref="x", yref="y", x0=0, y0=0, x1=6, y1=140, 
+                          fillcolor="rgba(255, 204, 0, 0.2)", line_color="rgba(255, 204, 0, 0.5)")
+            fig.add_trace(go.Scatter(x=[result['logp']], y=[result['tpsa']], mode='markers+text', 
+                                     marker=dict(size=18, color='#3b82f6'), text=[result['name']], 
+                                     textposition="top center"))
+            fig.update_layout(xaxis_title="WLOGP", yaxis_title="TPSA", plot_bgcolor='rgba(0,0,0,0)', 
+                              paper_bgcolor='rgba(0,0,0,0)', font=dict(color='#1e293b'), 
+                              height=350, margin=dict(t=20, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+            
+        with c_3d:
+            # 使用 py3Dmol 進行分子 3D 可視化
+            v1 = py3Dmol.view(width=400, height=300)
+            pdb_data = generate_3d_pdb(mol)
+            if pdb_data:
+                v1.addModel(pdb_data, 'pdb')
+                v1.setStyle({'stick': {}})
+                v1.zoomTo()
+                showmol(v1, height=300, width=400)
+            else:
+                st.warning("無法生成 3D 結構")
                     
                     # === 區塊 4: ADMET 規則引擎 ===
                     st.markdown("### 4️⃣ ADMET Risk Assessment")
