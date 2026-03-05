@@ -407,32 +407,36 @@ def main():
             else:
                 st.warning("無法生成 3D 結構")
 
-        # === 區塊 4: ADMET 風險評估 (修正縮排處) ===
+        # === 區塊 4: ADMET 風險評估與規則引擎 ===
         st.markdown("### 4️⃣ ADMET Risk Assessment")
-        # 呼叫我們先前編寫的實時決策引擎 (含 P-gp 排出與 MPO 運算)
+        
+        # 1. 顯示由我們為 BrainX 優化的藥化專家建議 (含 P-gp 與 MPO 運算)
         mod_suggestions = public_api.get_modification_suggestions(result)
         for advice in mod_suggestions:
             st.info(advice)
-                    
-                    # === 區塊 4: ADMET 規則引擎 ===
-                    st.markdown("### 4️⃣ ADMET Risk Assessment")
-                    herg_r, herg_d, herg_ref = admet.predict_herg(mol)
-                    liv_r, liv_d, liv_ref = admet.predict_liver(mol)
-                    bbb_r, bbb_d, bbb_ref = admet.predict_bbb(mol)
-                    
-                    col_h, col_l, col_b = st.columns(3)
-                    with col_h:
-                        c_code = "risk-high" if herg_r == "High" else "risk-medium" if herg_r == "Moderate" else "risk-low"
-                        b_code = "#ef4444" if herg_r == "High" else "#f59e0b" if herg_r == "Moderate" else "#10b981"
-                        st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🫀 hERG Risk</h4><p class="{c_code}" style="font-size:1.2rem;">{herg_r}</p><p style="font-size:0.8rem;color:#64748b;">{herg_d}</p></div>', unsafe_allow_html=True)
-                    with col_l:
-                        c_code = "risk-high" if liv_r == "High" else "risk-medium" if liv_r == "Moderate" else "risk-low"
-                        b_code = "#ef4444" if liv_r == "High" else "#f59e0b" if liv_r == "Moderate" else "#10b981"
-                        st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🧪 Liver DILI</h4><p class="{c_code}" style="font-size:1.2rem;">{liv_r}</p><p style="font-size:0.8rem;color:#64748b;">{liv_d}</p></div>', unsafe_allow_html=True)
-                    with col_b:
-                        c_code = "risk-high" if bbb_r == "Low" else "risk-medium" if bbb_r == "Moderate" else "risk-low"
-                        b_code = "#ef4444" if bbb_r == "Low" else "#f59e0b" if bbb_r == "Moderate" else "#10b981"
-                        st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🧠 BBB Penetration</h4><p class="{c_code}" style="font-size:1.2rem;">{bbb_r}</p><p style="font-size:0.8rem;color:#64748b;">{bbb_d}</p></div>', unsafe_allow_html=True)
+            
+        st.divider()
+
+        # 2. 顯示 ADMET 預測數據指標
+        herg_r, herg_d, herg_ref = admet.predict_herg(mol)
+        liv_r, liv_d, liv_ref = admet.predict_liver(mol)
+        bbb_r, bbb_d, bbb_ref = admet.predict_bbb(mol)
+        
+        col_h, col_l, col_b = st.columns(3)
+        with col_h:
+            c_code = "risk-high" if herg_r == "High" else "risk-medium" if herg_r == "Moderate" else "risk-low"
+            b_code = "#ef4444" if herg_r == "High" else "#f59e0b" if herg_r == "Moderate" else "#10b981"
+            st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🫀 hERG Risk</h4><p class="{c_code}" style="font-size:1.2rem;">{herg_r}</p><p style="font-size:0.8rem;color:#64748b;">{herg_d}</p></div>', unsafe_allow_html=True)
+        
+        with col_l:
+            c_code = "risk-high" if liv_r == "High" else "risk-medium" if liv_r == "Moderate" else "risk-low"
+            b_code = "#ef4444" if liv_r == "High" else "#f59e0b" if liv_r == "Moderate" else "#10b981"
+            st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🧪 Liver DILI</h4><p class="{c_code}" style="font-size:1.2rem;">{liv_r}</p><p style="font-size:0.8rem;color:#64748b;">{liv_d}</p></div>', unsafe_allow_html=True)
+            
+        with col_b:
+            c_code = "risk-high" if bbb_r == "Low" else "risk-medium" if bbb_r == "Moderate" else "risk-low"
+            b_code = "#ef4444" if bbb_r == "Low" else "#f59e0b" if bbb_r == "Moderate" else "#10b981"
+            st.markdown(f'<div style="background:rgba(255,255,255,0.8); border-radius:12px; padding:15px; border-top:4px solid {b_code}; box-shadow:0 2px 4px rgba(0,0,0,0.05);"><h4>🧠 BBB Penetration</h4><p class="{c_code}" style="font-size:1.2rem;">{bbb_r}</p><p style="font-size:0.8rem;color:#64748b;">{bbb_d}</p></div>', unsafe_allow_html=True)
 
     # 其他佔位分頁
     elif page in ["🏠 Internal Dashboard", "📝 Database Settings"]:
