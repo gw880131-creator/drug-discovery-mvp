@@ -153,6 +153,40 @@ class PublicDatabaseAPI:
             
         return [{"Target": "資料庫查無相似結構配體", "Score": 0.0, "Class": "N/A"}]
 
+# ==================== ADMET 規則引擎 ====================
+class FreeADMETRules:
+    @staticmethod
+    def predict_herg(mol):
+        """預測 hERG 心臟毒性風險"""
+        tpsa, logp = Descriptors.TPSA(mol), Descriptors.MolLogP(mol)
+        alerts = {"High": ["[c]CCN", "[c]OCCN"], "Moderate": ["N(C)C", "CN(C)C"]}
+        if tpsa < 60 and logp > 3.5: 
+            return "High", "High lipophilicity & Low TPSA", "Ekins et al. 2002"
+        for level, patterns in alerts.items():
+            for patt in patterns:
+                if mol.HasSubstructMatch(Chem.MolFromSmarts(patt)): 
+                    return level, f"Contains hERG pharmacophore", "Structural Alert"
+        return "Low", "No significant alerts", "Rule-based"
+
+    @staticmethod
+    def predict_liver(mol):
+        """預測肝毒性 (DILI) 風險"""
+        if Descriptors.MolLogP(mol) > 4.0 and Descriptors.MolWt(mol) > 400: 
+            return "Moderate", "Rule of 2: LogP > 4 & MW > 400", "Chen et al. 2016"
+        if Fragments.fr_COO(mol) > 0: 
+            return "Moderate", "Contains carboxylic acid", "Structural Alert"
+        return "Low", "Properties within safe range", "Rule-based"
+
+    @staticmethod
+    def predict_bbb(mol):
+        """預測血腦屏障 (BBB) 通透性"""
+        logp, tpsa = Descriptors.MolLogP(mol), Descriptors.TPSA(mol)
+        if tpsa < 79 and 0.4 < logp < 6.0: 
+            return "High", "Yellow Zone (Optimal for CNS)", "BOILED-Egg Model"
+        elif tpsa < 120: 
+            return "Moderate", "White Zone (Peripheral)", "BOILED-Egg Model"
+        else: 
+            return "Low", "Outside Egg (Poor Penetration)", "BOILED-Egg Model"
 # ==================== 主程式 ====================
 def main():
     public_api = PublicDatabaseAPI()
