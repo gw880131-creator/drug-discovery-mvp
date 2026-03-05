@@ -27,54 +27,78 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
     
-    /* 全局背景 */
-    .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #e2e8f0; font-family: 'Inter', sans-serif; }
+    /* 1. 全局背景：改為乾淨清爽的淺灰白漸層 */
+    .stApp { 
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); 
+        color: #1e293b; 
+        font-family: 'Inter', sans-serif; 
+    }
     
-    /* 玻璃擬態卡片 (如果漏掉這段，背景會變成醜醜的預設樣式) */
+    /* 2. 側邊欄：改為淡雅的灰白色 */
+    section[data-testid="stSidebar"] {
+        background-color: #f1f5f9;
+        border-right: 1px solid #cbd5e1;
+    }
+    
+    /* 3. 玻璃擬態卡片：改為半透明白色，增強科技感 */
     div[data-testid="stExpander"], div.css-1r6slb0, .metric-card {
-        background: rgba(30, 41, 59, 0.7) !important;
-        backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 20px; margin-bottom: 15px;
+        background: rgba(255, 255, 255, 0.8) !important;
+        backdrop-filter: blur(12px); 
+        border: 1px solid rgba(255, 255, 255, 1); 
+        border-radius: 16px; 
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); 
+        padding: 20px; 
+        margin-bottom: 15px;
     }
     
-    /* 輸入框與按鈕 */
+    /* 4. 輸入框與按鈕：配合淺色系 */
     .stTextInput input, .stNumberInput input, .stSelectbox > div > div { 
-        background-color: rgba(15, 23, 42, 0.8) !important; color: #e2e8f0 !important; border: 1px solid #475569 !important; border-radius: 8px; 
+        background-color: #ffffff !important; 
+        color: #1e293b !important; 
+        border: 1px solid #cbd5e1 !important; 
+        border-radius: 8px; 
     }
-    .stButton>button { background: linear-gradient(to right, #2563eb, #3b82f6); color: white; border: none; border-radius: 8px; font-weight: 600; }
+    .stButton>button { 
+        background: linear-gradient(to right, #2563eb, #3b82f6); 
+        color: white; border: none; border-radius: 8px; font-weight: 600; 
+    }
     
-    /* =================【全新升級：純白數字與標題】================= */
-    /* 指標數值：改為純白、字體放大、發光 */
+    /* =================【全新淺色主題：數字與標題】================= */
+    /* 指標數值：改為企業深藍色，放大，強調專業感 */
     div[data-testid="stMetricValue"] { 
         font-family: 'JetBrains Mono', monospace; 
-        color: #ffffff !important; 
+        color: #1e40af !important; /* 深藍色 */
         font-size: 2.5rem !important; 
-        text-shadow: 0 0 12px rgba(255, 255, 255, 0.6); 
+        text-shadow: none !important; /* 淺色底不需要發光 */
     }
     
-    /* 強制將指標標題 (MW, LogP 等) 改為純白色、加粗、微放大 */
+    /* 核彈級覆蓋：強制將指標標題 (MW, LogP 等) 改為清晰的深灰色 */
     div[data-testid="stMetricLabel"], 
-    div[data-testid="stMetricLabel"] * { 
-        color: #ffffff !important; 
+    div[data-testid="stMetricLabel"] > div,
+    div[data-testid="stMetricLabel"] p,
+    div[data-testid="stMetricLabel"] span,
+    div[data-testid="stMetricLabel"] label { 
+        color: #475569 !important; /* 深灰色 */
         font-size: 1.1rem !important; 
         font-weight: 800 !important;
-        letter-spacing: 1px;
-        text-shadow: 0 0 5px rgba(255,255,255,0.3);
+        letter-spacing: 1px !important;
+        text-shadow: none !important;
     }
     /* ========================================================= */
 
-    /* 內部警示與風險標籤 */
+    /* 5. 標題與一般文字顏色：改為深色以在淺背景上顯示 */
+    h1, h2, h3, h4, h5, h6 { color: #0f172a !important; }
+    p, li { color: #334155; }
+
+    /* 6. 內部警示與風險標籤 */
     .internal-warning {
-        background-color: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 20px; font-weight: 600; letter-spacing: 0.5px;
+        background-color: #fef3c7; border: 1px solid #f59e0b; color: #b45309; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 20px; font-weight: 600; letter-spacing: 0.5px;
     }
     .risk-high { color: #ef4444; font-weight: bold; }
     .risk-medium { color: #f59e0b; font-weight: bold; }
     .risk-low { color: #10b981; font-weight: bold; }
-</style>
-""", unsafe_allow_html=True)
 
 # ==================== 救命字典 (Demo防斷網) ====================
 # 這些是 Demo 常用的藥物，寫死在這裡確保 100% 成功解析
