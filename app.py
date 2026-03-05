@@ -195,22 +195,27 @@ class PublicDatabaseAPI:
         return [{"Target": "擴大搜尋後仍無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 
     def get_modification_suggestions(self, result):
-        """【藥化專家系統】基於結構指紋與 CNS MPO 的深度實時運算"""
-        from rdkit.Chem import Fragments, Descriptors
+        """【藥化專家系統】使用 SMARTS 進行精準官能基偵測與 CNS MPO 運算"""
+        from rdkit import Chem
+        from rdkit.Chem import Descriptors
+        
         mol = Chem.MolFromSmiles(result['smiles'])
         if not mol: return ["❌ 分子結構解析失敗"]
         
         logp, tpsa = result['logp'], result['tpsa']
         suggestions = []
         
-        # 1. 執行結構特徵偵測 (與 Grasyon 判斷一致的核心：看官能基)
-        oh_count = Fragments.fr_OH(mol)      # 偵測羥基 (-OH)
-        # 偵測胺基 (含一級、二級、三級胺)
-        nh_count = Fragments.fr_NH0(mol) + Fragments.fr_NH1(mol) + Fragments.fr_NH2(mol) 
-        f_count = result['smiles'].upper().count('F') # 偵測氟原子 (F)
-        has_acid = Fragments.fr_COO(mol) > 0 # 偵測是否有羧酸根 (-COOH)
+        # 1. 使用 SMARTS 定義藥化關鍵官能基 (這能解決 Fragments 報錯並提升精準度)
+        # 偵測羥基 (-OH), 羧酸 (-COOH), 與氟原子 (F)
+        oh_pattern = Chem.MolFromSmarts('[OX2H]')
+        acid_pattern = Chem.MolFromSmarts('C(=O)[O;H1,H0-]')
+        f_pattern = Chem.MolFromSmarts('[F]')
+        
+        oh_count = len(mol.GetSubstructMatches(oh_pattern))
+        has_acid = mol.HasSubstructMatch(acid_pattern)
+        f_count = len(mol.GetSubstructMatches(f_pattern))
 
-        # 2. 計算實時 CNS MPO 基礎分數
+        # 2. 實時計算 CNS MPO 分數 (藥化入腦潛力指標)
         mpo_score = 0
         if 1.0 < logp < 3.0: mpo_score += 1.0
         if tpsa < 75: mpo_score += 1.0
@@ -218,21 +223,23 @@ class PublicDatabaseAPI:
 
         suggestions.append(f"📊 **實時 CNS MPO 指數: {mpo_score}/3.0**")
 
-        # 3. 根據「特定結構特徵」給予高度差異化的藥化策略 (MedChem Logic)
+        # 3. 差異化建議：區分為何藥物入腦困難
+        # 針對 BrainX 的 EAAT2 誘導劑研究，酸性基團是關鍵瓶頸
         if has_acid:
-            suggestions.append("🚫 **結構性瓶頸**: 偵測到羧酸根。在生理 pH 下帶負電，極難穿透血腦屏障 (BBB)。")
-            suggestions.append("🔹 **藥化策略**: 建議將其轉化為酯類前藥 (Prodrug) 或使用生物電子等排體 (Bioisostere) 置換。")
+            suggestions.append("🚫 **關鍵瓶頸：酸性基團**。偵測到羧酸根。在生理 pH 下帶負電，這會導致分子極難穿透血腦屏障 (BBB)。")
+            suggestions.append("🔹 **策略**: 可嘗試將其置換為四唑 (Tetrazole) 或進行前藥 (Prodrug) 化，這對於 BX100 類結構至關重要。")
+            
         
         if oh_count > 2:
-            suggestions.append(f"⚠️ **極性基團過剩**: 含有 {oh_count} 個羥基，會顯著增加去溶劑化能障。")
-            suggestions.append("🔹 **藥化策略**: 嘗試減少非必要的 -OH 或進行烷基化修飾，以降低 TPSA。")
+            suggestions.append(f"⚠️ **極性負擔**: 含有 {oh_count} 個羥基。")
+            suggestions.append("🔹 **策略**: 羥基過多會顯著增加氫鍵給體數量，建議透過烷基化或隱藏在分子內氫鍵中來改善。")
 
         if f_count == 0 and logp < 2.0:
-            suggestions.append("💡 **親脂性優化空間**: 目前結構缺乏氟原子。")
-            suggestions.append("🔹 **藥化策略**: 引入 **氟原子 (F)** 可提升代謝穩定性並增加脂溶性，有助於 EAAT2 調節劑入腦。")
+            suggestions.append("💡 **優化路徑**: 目前結構缺乏氟原子 (F)。")
+            suggestions.append("🔹 **策略**: 引入氟原子通常能提升代謝穩定性並微調親脂性，有利於 AD 藥物的腦部滲透。")
 
         if mpo_score >= 2.5 and not has_acid:
-            suggestions.append("✅ **結構參數理想**: 該分子的理化輪廓與成功入腦的神經藥物高度契合。")
+            suggestions.append("✅ **結構參數理想**: 理化性質與成功入腦的神經藥物高度契合。")
             
         return suggestions
 # ==================== ADMET 規則引擎 ====================
