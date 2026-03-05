@@ -111,7 +111,7 @@ class PublicDatabaseAPI:
         except Exception:
             return None
 
-   def get_clinical_summary(self, drug_name):
+    def get_clinical_summary(self, drug_name):
         """【研發特化版】整合 Wikipedia 與神經藥理學背景預設"""
         import urllib.parse
         search_name = drug_name.strip()
