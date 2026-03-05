@@ -263,12 +263,6 @@ def main():
                     st.markdown("### 📚 Clinical Background & Mechanism")
                     clinical_info = public_api.get_clinical_summary(query)
                     st.write(clinical_info)
-
-                    # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
-                    st.markdown("### 🛠️ AI Chemical Modification Suggestions")
-                    mod_suggestions = public_api.get_modification_suggestions(result)
-                    for advice in mod_suggestions:
-                        st.info(advice)
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                     st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                     mod_suggestions = public_api.get_modification_suggestions(result)
