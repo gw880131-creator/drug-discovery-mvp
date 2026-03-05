@@ -153,7 +153,7 @@ class PublicDatabaseAPI:
             st.warning(f"⚠️ 即時運算中遇到技術問題：{str(e)}")
             
         return [{"Target": "資料庫查無相似結構配體", "Score": 0.0, "Class": "N/A"}]
-        def predict_targets(self, smiles, drug_name):
+def predict_targets(self, smiles, drug_name):
         """【AD/PD 研發加強版】真實資料庫運算 + 澱粉樣蛋白路徑掃描"""
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
