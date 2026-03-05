@@ -97,7 +97,6 @@ class PublicDatabaseAPI:
         import urllib.parse
         clean_query = identifier.strip()
         try:
-            # 1. 嘗試精確搜尋，失敗則自動切換至同義詞搜尋
             c = pcp.get_compounds(clean_query, id_type)
             if not c:
                 c = pcp.get_compounds(clean_query, 'searchtype=synonym')
@@ -107,7 +106,6 @@ class PublicDatabaseAPI:
             smiles = comp.isomeric_smiles or comp.canonical_smiles
             mol = Chem.MolFromSmiles(smiles)
             
-            # 即時計算物化性質
             return {
                 'cid': comp.cid, 'name': clean_query.title(), 'smiles': smiles,
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
@@ -125,39 +123,56 @@ class PublicDatabaseAPI:
             if res.status_code == 200:
                 return res.json().get('extract', "暫無摘要。")
             
-            # 針對專案關鍵藥物的動態背景邏輯
             drug_lower = search_name.lower()
             if "cephapirin" in drug_lower or "ceftriaxone" in drug_lower:
                 return (
-                    "**研發背景提示：** 此分子屬於 Beta-lactam 類結構。"
-                    "在神經保護研究中，這類結構被證實能誘導星狀細胞 (Astrocyte) 上的 **EAAT2 (GLT-1)** 表達。"
+                    "**研發背景提示：** 此分子屬於 Beta-lactam 類結構。在神經保護研究中，"
+                    "這類結構被證實能誘導星狀細胞 (Astrocyte) 上的 **EAAT2 (GLT-1)** 表達。"
                 )
             return f"系統已嘗試即時檢索 '{search_name}'，但全球臨床資料庫暫無匹配紀錄。"
         except:
-            return "連線至臨床資料庫超時，請檢查網路設定。"
+            return "連線至臨床資料庫超時。"
+
+    def get_pubmed_links(self, drug_name):
+        """【全新功能】自動檢索 PubMed 關於藥物與 EAAT2/神經保護的文獻"""
+        import urllib.parse
+        # 構建針對 EAAT2 與神經退化性疾病的專業檢索詞
+        search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
+        encoded_term = urllib.parse.quote(search_term)
+        
+        try:
+            # 呼叫 NCBI E-search API
+            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={encoded_term}&retmode=json&retmax=5"
+            res = requests.get(search_url, timeout=10)
+            if res.status_code == 200:
+                id_list = res.json().get('esearchresult', {}).get('idlist', [])
+                if not id_list:
+                    return "目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。"
+                
+                links = [f"- [PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" for pmid in id_list]
+                return "\n".join(links)
+        except:
+            return "PubMed 連線異常。"
+        return "檢索中..."
 
     def get_modification_suggestions(self, result):
         """【自動診斷】針對神經藥物入腦能力 (BBB) 的修飾建議"""
         logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
         suggestions = []
-        
-        # 依據 TPSA 與 LogP 給予藥化建議
         if tpsa > 90:
             suggestions.append("⚠️ **TPSA 過高**: 建議進行結構修飾以提升 BBB 穿透力。")
         if logp < 1.0:
             suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
-        
         if not suggestions:
             suggestions.append("✅ **結構參數理想**: 符合 CNS 藥物開發準則。")
         return suggestions
 
     def predict_targets(self, smiles, drug_name):
-        """【真·實時運算】ChEMBL 資料庫現場執行相似度與靶點比對"""
+        """【真·實時運算】ChEMBL 資料庫現場執行靶點比對"""
         import urllib.parse
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
-            # 現場執行相似度比對 (運算時間約 10-30 秒)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
             
             targets_map = {}
@@ -170,7 +185,6 @@ class PublicDatabaseAPI:
                         for act in act_res.json().get('activities', []):
                             t_name = act.get('target_pref_name')
                             species = act.get('target_organism', 'Unknown')
-                            # 針對神經研發核心靶點進行權重加強
                             if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
                                 display_name = f"{t_name} [{species}]"
                                 targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * 5.0)
@@ -286,6 +300,10 @@ def main():
                     st.markdown("### 📚 Clinical Background & Mechanism")
                     clinical_info = public_api.get_clinical_summary(query)
                     st.write(clinical_info)
+                    # === 區塊 1.3: PubMed 文獻追蹤 (針對 EAAT2 / 神經保護) ===
+                    st.markdown("### 🔬 Related Scientific Publications (PubMed)")
+                    pubmed_results = public_api.get_pubmed_links(query)
+                    st.markdown(pubmed_results)
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                     st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                     mod_suggestions = public_api.get_modification_suggestions(result)
