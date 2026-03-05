@@ -349,7 +349,7 @@ def main():
                 st.info("目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。")
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                 st.markdown("### 🛠️ AI Chemical Modification Suggestions")
-                    mod_suggestions = public_api.get_modification_suggestions(result)
+                mod_suggestions = public_api.get_modification_suggestions(result)
                     for advice in mod_suggestions:
                         st.info(advice)
                    # === 區塊 2: AI 靶點預測與文獻連動 ===
