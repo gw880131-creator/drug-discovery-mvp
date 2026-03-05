@@ -27,7 +27,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
     
     /* 1. 全局背景：改為乾淨清爽的淺灰白漸層 */
     .stApp { 
@@ -99,6 +101,8 @@ st.set_page_config(
     .risk-high { color: #ef4444; font-weight: bold; }
     .risk-medium { color: #f59e0b; font-weight: bold; }
     .risk-low { color: #10b981; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
 
 # ==================== 救命字典 (Demo防斷網) ====================
 # 這些是 Demo 常用的藥物，寫死在這裡確保 100% 成功解析
