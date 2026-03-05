@@ -276,7 +276,11 @@ def main():
                         | **HBD** (氫鍵給體) | < 1 | **水合層效應。** 氫鍵給體易與水形成強鍵結，阻礙穿透。 |
                         | **pKa** (酸鹼度) | 7.5 - 8.5 | **離子化狀態。** 只有未帶電的中性分子能有效藉由被動擴散通過。 |
                         """)
-                    
+                    # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
+                    st.markdown("### 🛠️ AI Chemical Modification Suggestions")
+                    mod_suggestions = public_api.get_modification_suggestions(result)
+                    for advice in mod_suggestions:
+                    st.info(advice)
                     # === 區塊 2: AI 靶點預測 (全新功能) ===
                     st.markdown("### 🎯 2️⃣ AI Target Prediction (Ligand-Based)")
                     targets_data = public_api.predict_targets(result['smiles'], result['name'])
