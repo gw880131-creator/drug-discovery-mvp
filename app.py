@@ -89,11 +89,11 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
-        # 鎖定您的研究專案核心靶點
+        # 鎖定您的研究專案核心靶點 (AD/PD 相關)
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·即時查詢】自動解析結構"""
+        """【真·即時查詢】不依賴字典，獲取最新結構數據"""
         import urllib.parse
         clean_query = identifier.strip()
         try:
@@ -109,134 +109,30 @@ class PublicDatabaseAPI:
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
         except Exception: return None
-    def get_pubmed_details(self, drug_name):
-        """【全新功能】抓取 PubMed 論文標題與連結，為研發提供即時佐證"""
-        import urllib.parse
-        # 針對 EAAT2 與神經保護路徑進行專業檢索
-        search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
-        try:
-            # 1. 搜尋 PMID
-            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={urllib.parse.quote(search_term)}&retmode=json&retmax=3"
-            res = requests.get(search_url, timeout=10)
-            id_list = res.json().get('esearchresult', {}).get('idlist', [])
-            
-            if not id_list: return []
-            
-            # 2. 根據 PMID 抓取標題 (Summary)
-            ids = ",".join(id_list)
-            summary_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={ids}&retmode=json"
-            sum_res = requests.get(summary_url, timeout=10)
-            result_set = sum_res.json().get('result', {})
-            
-            papers = []
-            for pmid in id_list:
-                title = result_set.get(pmid, {}).get('title', '無標題資訊')
-                papers.append({"title": title, "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"})
-            return papers
-        except: return []
-    def get_clinical_summary(self, drug_name):
-        """【實時檢索修正】改用模糊檢索與多重回退機制，確保 Ceftriaxone 等藥物必能查獲"""
-        import urllib.parse
-        search_name = drug_name.strip()
-        
-        try:
-            # 1. Wikipedia 檢索 (加入歸一化：首字母大寫)
-            wiki_name = search_name.capitalize()
-            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(wiki_name)}"
-            res = requests.get(wiki_url, timeout=10)
-            if res.status_code == 200:
-                return res.json().get('extract', "找到紀錄但無摘要。")
-
-            # 2. ChEMBL 檢索修正：捨棄 iexact (精確)，改用模糊搜尋 (__contains) 或 ID 轉換
-            # 先找分子 ID，再找機制，這才是專業藥化系統的標準作法
-            mol_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?pref_name__icontains={search_name}&format=json"
-            mol_res = requests.get(mol_url, timeout=10)
-            
-            if mol_res.status_code == 200:
-                mols = mol_res.json().get('molecules', [])
-                if mols:
-                    chembl_id = mols[0].get('molecule_chembl_id')
-                    # 再次請求該 ID 的作用機制
-                    mech_url = f"https://www.ebi.ac.uk/chembl/api/data/mechanism?molecule_chembl_id={chembl_id}&format=json"
-                    mech_res = requests.get(mech_url, timeout=10)
-                    
-                    if mech_res.status_code == 200:
-                        mechanisms = mech_res.json().get('mechanisms', [])
-                        if mechanisms:
-                            return "\n".join([f"🎯 **實時藥理**: {m.get('mechanism_of_action')} (靶點: {m.get('target_name')})" for m in mechanisms])
-
-            return f"❌ 實時檢索仍無匹配。請檢查輸入名稱或參考下方由 ChEMBL 實時運算的靶點預測圖表。"
-            
-        except Exception as e:
-            return f"⚠️ 網路連線波動: {str(e)}"
-
-    def get_pubmed_links(self, drug_name):
-        """【PubMed 自動檢索】抓取最新的 EAAT2 相關文獻"""
-        import urllib.parse
-        search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
-        try:
-            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={urllib.parse.quote(search_term)}&retmode=json&retmax=5"
-            res = requests.get(search_url, timeout=10)
-            if res.status_code == 200:
-                id_list = res.json().get('esearchresult', {}).get('idlist', [])
-                if not id_list: return "目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。"
-                return "\n".join([f"- [PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" for pmid in id_list])
-        except: return "PubMed 連線異常。"
-        return "檢索中..."
-
-    def predict_targets(self, smiles, drug_name):
-        """【優化版即時預測】自動擴大搜尋半徑以確保結果呈現"""
-        import urllib.parse
-        try:
-            base_url = "https://www.ebi.ac.uk/chembl/api/data"
-            # 若 80% 相似度無結果，則自動降低至 70% 擴大檢索範圍
-            for threshold in [80, 70]:
-                res = requests.get(f"{base_url}/similarity/{urllib.parse.quote(smiles)}/{threshold}?format=json", timeout=300)
-                if res.status_code == 200 and res.json().get('molecules'):
-                    similar_mols = res.json()['molecules'][:10] # 增加比對樣本數
-                    targets_map = {}
-                    for m in similar_mols:
-                        sim_score = float(m['similarity'])
-                        act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=30&format=json", timeout=60)
-                        if act_res.status_code == 200:
-                            for act in act_res.json().get('activities', []):
-                                t_name = act.get('target_pref_name')
-                                species = act.get('target_organism', 'Unknown')
-                                if t_name and "unspecified" not in t_name.lower():
-                                    weight = 5.0 if any(key in t_name.upper() for key in self.ad_pd_keys) else 1.0
-                                    display_name = f"{t_name} [{species}]"
-                                    targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * weight)
-                    
-                    if targets_map:
-                        sorted_res = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
-                        max_v = sorted_res[0][1]
-                        return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1), "Class": "ChEMBL Live"} for t in sorted_res]
-            
-        except Exception: pass
-        return [{"Target": "擴大搜尋後仍無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 
     def get_modification_suggestions(self, result):
-        """【藥化專家系統】使用 SMARTS 進行精準官能基偵測與 CNS MPO 運算"""
+        """【藥化決策引擎】實時預測 P-gp 排出風險與結構穩定性"""
         from rdkit import Chem
         from rdkit.Chem import Descriptors
-        
         mol = Chem.MolFromSmiles(result['smiles'])
         if not mol: return ["❌ 分子結構解析失敗"]
         
         logp, tpsa = result['logp'], result['tpsa']
         suggestions = []
         
-        # 1. 使用 SMARTS 定義藥化關鍵官能基 (這能解決 Fragments 報錯並提升精準度)
-        # 偵測羥基 (-OH), 羧酸 (-COOH), 與氟原子 (F)
-        oh_pattern = Chem.MolFromSmarts('[OX2H]')
+        # 1. 專業藥化 SMARTS 偵測邏輯
+        # 偵測常見的 P-gp 底物特徵 (如三級胺且帶有長脂肪鏈)
+        pgp_pattern = Chem.MolFromSmarts('[NX3](C)(C)C') 
+        # 偵測羧酸 (BBB 大忌)
         acid_pattern = Chem.MolFromSmarts('C(=O)[O;H1,H0-]')
-        f_pattern = Chem.MolFromSmarts('[F]')
-        
-        oh_count = len(mol.GetSubstructMatches(oh_pattern))
-        has_acid = mol.HasSubstructMatch(acid_pattern)
-        f_count = len(mol.GetSubstructMatches(f_pattern))
+        # 偵測易代謝片段 (如不穩定的酯鍵)
+        ester_pattern = Chem.MolFromSmarts('C(=O)O[C,H]')
 
-        # 2. 實時計算 CNS MPO 分數 (藥化入腦潛力指標)
+        has_pgp_risk = mol.HasSubstructMatch(pgp_pattern)
+        has_acid = mol.HasSubstructMatch(acid_pattern)
+        has_ester = mol.HasSubstructMatch(ester_pattern)
+
+        # 2. 實時 CNS MPO 運算
         mpo_score = 0
         if 1.0 < logp < 3.0: mpo_score += 1.0
         if tpsa < 75: mpo_score += 1.0
@@ -244,25 +140,94 @@ class PublicDatabaseAPI:
 
         suggestions.append(f"📊 **實時 CNS MPO 指數: {mpo_score}/3.0**")
 
-        # 3. 差異化建議：區分為何藥物入腦困難
-        # 針對 BrainX 的 EAAT2 誘導劑研究，酸性基團是關鍵瓶頸
+        # 3. 差異化建議 (針對 BrainX EAAT2 專案)
         if has_acid:
-            suggestions.append("🚫 **關鍵瓶頸：酸性基團**。偵測到羧酸根。在生理 pH 下帶負電，這會導致分子極難穿透血腦屏障 (BBB)。")
-            suggestions.append("🔹 **策略**: 可嘗試將其置換為四唑 (Tetrazole) 或進行前藥 (Prodrug) 化。")
+            suggestions.append("🚫 **高入腦風險**: 偵測到羧酸根。此結構與 **BX100** 類似，極易因帶電被 BBB 攔阻。")
+            suggestions.append("🔹 **策略**: 建議嘗試酯化 (Esterification) 或置換為四唑。")
             
-        
-        if oh_count > 2:
-            suggestions.append(f"⚠️ **極性負擔**: 含有 {oh_count} 個羥基。")
-            suggestions.append("🔹 **策略**: 羥基過多會顯著增加氫鍵給體數量，建議透過烷基化或隱藏在分子內氫鍵中來改善。")
 
-        if f_count == 0 and logp < 2.0:
-            suggestions.append("💡 **優化路徑**: 目前結構缺乏氟原子 (F)。")
-            suggestions.append("🔹 **策略**: 引入氟原子通常能提升代謝穩定性並微調親脂性，有利於 AD 藥物的腦部滲透。")
+        if has_pgp_risk and logp > 3.5:
+            suggestions.append("⚠️ **P-gp 排出警示**: 結構特徵顯示極易被 P-glycoprotein 幫浦踢出大腦。")
+            suggestions.append("🔹 **策略**: 降低分子親脂性或增加極性基團的空間位阻。")
+            
+
+        if has_ester:
+            suggestions.append("🔬 **代謝穩定性提示**: 含有酯鍵，在血漿中可能迅速水解。")
+            suggestions.append("🔹 **策略**: 若此為前藥設計則理想；若否，請改用醯胺鍵 (Amide) 或醚鍵。")
 
         if mpo_score >= 2.5 and not has_acid:
-            suggestions.append("✅ **結構參數理想**: 理化性質與成功入腦的神經藥物高度契合。")
-            
+            suggestions.append("✅ **篩選通過**: 該結構參數平衡，適合進入體外 EAAT2 誘導活性測試。")
+
         return suggestions
+
+    def get_clinical_summary(self, drug_name):
+        """【即時檢索】多重機制抓取，確保關鍵藥物不漏接"""
+        import urllib.parse
+        search_name = drug_name.strip()
+        try:
+            # 第一層：Wikipedia
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name.capitalize())}"
+            res = requests.get(wiki_url, timeout=10)
+            if res.status_code == 200:
+                return res.json().get('extract', "找到紀錄但無摘要。")
+
+            # 第二層：ChEMBL 模糊搜尋
+            mol_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?pref_name__icontains={search_name}&format=json"
+            mol_res = requests.get(mol_url, timeout=10)
+            if mol_res.status_code == 200:
+                mols = mol_res.json().get('molecules', [])
+                if mols:
+                    chembl_id = mols[0].get('molecule_chembl_id')
+                    mech_url = f"https://www.ebi.ac.uk/chembl/api/data/mechanism?molecule_chembl_id={chembl_id}&format=json"
+                    mech_res = requests.get(mech_url, timeout=10)
+                    if mech_res.status_code == 200:
+                        mechanisms = mech_res.json().get('mechanisms', [])
+                        if mechanisms:
+                            return "\n".join([f"🎯 **實時藥理**: {m.get('mechanism_of_action')} (靶點: {m.get('target_name')})" for m in mechanisms])
+            return f"❌ 實時檢索完成：'{search_name}' 無公開臨床紀錄。"
+        except: return "連線異常。"
+
+    def get_pubmed_details(self, drug_name):
+        """抓取 PubMed 關於 EAAT2 與神經保護的最新文獻"""
+        import urllib.parse
+        search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
+        try:
+            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={urllib.parse.quote(search_term)}&retmode=json&retmax=3"
+            res = requests.get(search_url, timeout=10)
+            id_list = res.json().get('esearchresult', {}).get('idlist', [])
+            if not id_list: return []
+            ids = ",".join(id_list)
+            sum_res = requests.get(f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={ids}&retmode=json", timeout=10)
+            result_set = sum_res.json().get('result', {})
+            return [{"title": result_set.get(pmid, {}).get('title', '無標題'), "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"} for pmid in id_list]
+        except: return []
+
+    def predict_targets(self, smiles, drug_name):
+        """ChEMBL 實時靶點比對"""
+        import urllib.parse
+        try:
+            base_url = "https://www.ebi.ac.uk/chembl/api/data"
+            safe_smiles = urllib.parse.quote(smiles)
+            res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
+            targets_map = {}
+            if res.status_code == 200 and res.json().get('molecules'):
+                similar_mols = res.json()['molecules'][:5]
+                for m in similar_mols:
+                    sim_score = float(m['similarity'])
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=20&format=json", timeout=60)
+                    if act_res.status_code == 200:
+                        for act in act_res.json().get('activities', []):
+                            t_name = act.get('target_pref_name')
+                            species = act.get('target_organism', 'Unknown')
+                            if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
+                                display_name = f"{t_name} [{species}]"
+                                targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * 5.0)
+            if targets_map:
+                sorted_res = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
+                max_v = sorted_res[0][1]
+                return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1)} for t in sorted_res]
+        except: pass
+        return []
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
