@@ -131,6 +131,27 @@ class PublicDatabaseAPI:
             return "正在連線全球臨床資料庫，請稍候..."
         except:
             return "連線超時，請檢查網路環境。"
+        def get_modification_suggestions(self, result):
+        """【專案特化】針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
+        logp = result['logp']
+        tpsa = result['tpsa']
+        mw = result['mw']
+        suggestions = []
+        
+        # 1. 針對血腦屏障 (BBB) 穿透力的診斷
+        if tpsa > 90:
+            suggestions.append("⚠️ **TPSA 過高**: 目前極性表面積較大，建議移除氫鍵給體 (HBD) 或進行酯化，以提升入腦效率。")
+        if logp < 1.0:
+            suggestions.append("⚠️ **親脂性不足**: LogP 偏低，建議引入氟原子 (F) 或甲基以增強穿透細胞膜的能力。")
+        
+        # 2. 針對分子量與藥動學優化
+        if mw > 500:
+            suggestions.append("🔬 **分子量優化**: 結構較大可能影響擴散，建議評估側鏈修簡或改採用前藥 (Prodrug) 設計。")
+            
+        if not suggestions:
+            suggestions.append("✅ **結構參數理想**: 目前物化性質符合中樞神經系統 (CNS) 藥物開發準則。")
+            
+        return suggestions
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
