@@ -192,12 +192,13 @@ class PublicDatabaseAPI:
         except: return []
 
     def predict_targets(self, smiles, drug_name):
-        """【深度預測版】結合相似度與子結構比對，解決無結果問題"""
+        """【人體數據特化版】結合相似度搜尋，且僅鎖定 Homo sapiens 靶點數據"""
         import urllib.parse
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
-            # 1. 降低相似度閾值至 70% 以擴大檢索範圍
+            
+            # 1. 執行相似度檢索 (閾值 70% 確保有結果)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/70?format=json", timeout=20)
             
             targets_map = {}
@@ -205,7 +206,7 @@ class PublicDatabaseAPI:
             if res.status_code == 200:
                 mols = res.json().get('molecules', [])
             
-            # 2. 如果相似度搜尋無果，切換至子結構搜尋 (Substructure Search)
+            # 2. 備案：若相似度無果則執行子結構搜尋
             if not mols:
                 sub_res = requests.get(f"{base_url}/substructure/{safe_smiles}?limit=5&format=json", timeout=20)
                 if sub_res.status_code == 200:
@@ -214,13 +215,18 @@ class PublicDatabaseAPI:
             if mols:
                 for m in mols[:5]:
                     chembl_id = m['molecule_chembl_id']
-                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=30&format=json", timeout=15)
+                    # 獲取活性數據，並加入種屬過濾
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=50&format=json", timeout=15)
                     if act_res.status_code == 200:
                         for act in act_res.json().get('activities', []):
-                            t_name = act.get('target_pref_name')
-                            if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
-                                score = float(act.get('pchembl_value') or 5.0)
-                                targets_map[t_name] = targets_map.get(t_name, 0) + score
+                            # --- 關鍵過濾：僅保留人類數據 ---
+                            organism = act.get('target_organism', '')
+                            if organism == "Homo sapiens":
+                                t_name = act.get('target_pref_name')
+                                if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
+                                    # 使用 pChEMBL 值（如 pIC50）作為權重，無則給予基礎分
+                                    score = float(act.get('pchembl_value') or 5.0)
+                                    targets_map[t_name] = targets_map.get(t_name, 0) + score
             
             if targets_map:
                 sorted_res = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
