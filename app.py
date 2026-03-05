@@ -350,7 +350,7 @@ def main():
                     # === 區塊 1.5: 化學修飾專家建議 (針對 AD/PD) ===
                 st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                 mod_suggestions = public_api.get_modification_suggestions(result)
-                    for advice in mod_suggestions:
+                for advice in mod_suggestions:
                         st.info(advice)
                    # === 區塊 2: AI 靶點預測與文獻連動 ===
                     st.markdown("### 🎯 2️⃣ AI Target Prediction & PubMed Evidence")
