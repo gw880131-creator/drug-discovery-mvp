@@ -89,21 +89,17 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
+        # 針對神經退化性疾病專案鎖定關鍵靶點
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·無感查詢】自動修復大小寫與鹽類名稱，確保 Cephapirin 解析成功"""
+        """【真·無感查詢】自動修復大小寫與鹽類名稱"""
         import urllib.parse
-        # 修正：確保查詢字串不包含多餘空格，並嘗試小寫搜尋
         clean_query = identifier.strip()
-        
         try:
-            # 1. 嘗試直接搜尋
             c = pcp.get_compounds(clean_query, id_type)
-            # 2. 如果失敗，嘗試同義詞自動檢索
             if not c:
                 c = pcp.get_compounds(clean_query, 'searchtype=synonym')
-            
             if not c: return None
             comp = c[0]
             smiles = comp.isomeric_smiles or comp.canonical_smiles
@@ -112,44 +108,42 @@ class PublicDatabaseAPI:
                 'cid': comp.cid, 'name': clean_query.title(), 'smiles': smiles,
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
-        except Exception as e:
-            # 發生 400 錯誤時，這段邏輯會嘗試強制降級抓取數據
+        except Exception:
             return None
 
     def get_clinical_summary(self, drug_name):
-        """【臨床強化】整合多重搜尋路徑，避免出現『查無紀錄』"""
+        """【臨床強化】整合 Wikipedia 摘要與專案備案說明"""
         try:
-            # 優先搜尋 Wikipedia
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(drug_name)}"
             res = requests.get(url, timeout=10)
             if res.status_code == 200:
                 return res.json().get('extract', "暫無摘要。")
             
-            # 備案：如果是 AD/PD 相關藥物，提供專案背景說明
+            # 針對專案藥物的備案說明
             if "cephapirin" in drug_name.lower():
-                return "Cephapirin 是一種第一代頭孢菌素抗生素。在神經研發領域，其結構可用於研究 β-lactam 類藥物對穀氨酸轉運體 (EAAT2) 的潛在誘導作用。"
-            return "正在連線全球臨床資料庫，請稍候..."
+                return "Cephapirin 是一種第一代頭孢菌素。在神經研發領域，其結構可用於研究對穀氨酸轉運體 (EAAT2) 的潛在誘導作用。"
+            return "查無此藥物的臨床紀錄。"
         except:
             return "連線超時，請檢查網路環境。"
-        def get_modification_suggestions(self, result):
+
+    # --- 修正縮排後的功能函數 ---
+    def get_modification_suggestions(self, result):
         """【專案特化】針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
-        logp = result['logp']
-        tpsa = result['tpsa']
-        mw = result['mw']
+        logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
         suggestions = []
         
         # 1. 針對血腦屏障 (BBB) 穿透力的診斷
         if tpsa > 90:
-            suggestions.append("⚠️ **TPSA 過高**: 目前極性表面積較大，建議移除氫鍵給體 (HBD) 或進行酯化，以提升入腦效率。")
+            suggestions.append("⚠️ **TPSA 過高**: 建議移除氫鍵給體 (HBD) 或進行酯化以提升 BBB 穿透力。")
         if logp < 1.0:
-            suggestions.append("⚠️ **親脂性不足**: LogP 偏低，建議引入氟原子 (F) 或甲基以增強穿透細胞膜的能力。")
+            suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 或甲基以增強穿透細胞膜的能力。")
         
-        # 2. 針對分子量與藥動學優化
+        # 2. 針對分子量優化
         if mw > 500:
-            suggestions.append("🔬 **分子量優化**: 結構較大可能影響擴散，建議評估側鏈修簡或改採用前藥 (Prodrug) 設計。")
+            suggestions.append("🔬 **分子量優化**: 結構較大可能影響擴散，建議評估側鏈修簡或前藥設計。")
             
         if not suggestions:
-            suggestions.append("✅ **結構參數理想**: 目前物化性質符合中樞神經系統 (CNS) 藥物開發準則。")
+            suggestions.append("✅ **結構參數理想**: 目前性質符合中樞神經系統 (CNS) 藥物開發準則。")
             
         return suggestions
 # ==================== ADMET 規則引擎 ====================
