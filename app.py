@@ -187,6 +187,27 @@ class FreeADMETRules:
             return "Moderate", "White Zone (Peripheral)", "BOILED-Egg Model"
         else: 
             return "Low", "Outside Egg (Poor Penetration)", "BOILED-Egg Model"
+# ==================== 3D 結構生成輔助函式 ====================
+def generate_3d_pdb(mol):
+    """將 RDKit 分子物件轉換為 3D PDB 格式"""
+    try:
+        # 1. 為分子添加氫原子 (Add Hydrogens)
+        mol_3d = Chem.AddHs(mol)
+        
+        # 2. 執行 3D 構象嵌入 (3D Embedding)
+        # 使用 ETKDGv2 演算法生成立體座標
+        params = AllChem.ETKDGv2()
+        AllChem.EmbedMolecule(mol_3d, params)
+        
+        # 3. 結構優化 (力場優化，可選但建議加上以獲得更合理的鍵長鍵角)
+        AllChem.MMFFOptimizeMolecule(mol_3d)
+        
+        # 4. 轉換為 PDB 文字塊以供 py3Dmol 讀取
+        return Chem.MolToPDBBlock(mol_3d)
+    except Exception as e:
+        # 若嵌入失敗 (例如分子太大或太碎片化)，回傳 None
+        print(f"3D 嵌入失敗: {e}")
+        return None
 # ==================== 主程式 ====================
 def main():
     public_api = PublicDatabaseAPI()
