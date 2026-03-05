@@ -31,25 +31,23 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
     
+    /* 全局背景 */
     .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #e2e8f0; font-family: 'Inter', sans-serif; }
     
-  /* 強制將指標標題 (MW, LogP 等) 及其內部所有層級的文字改為純白色、加粗、微放大 */
-    div[data-testid="stMetricLabel"], 
-    div[data-testid="stMetricLabel"] * { 
-        color: #ffffff !important; 
-        font-size: 1.1rem !important; 
-        font-weight: 800 !important;
-        letter-spacing: 1px;
-        text-shadow: 0 0 5px rgba(255,255,255,0.3);
+    /* 玻璃擬態卡片 (如果漏掉這段，背景會變成醜醜的預設樣式) */
+    div[data-testid="stExpander"], div.css-1r6slb0, .metric-card {
+        background: rgba(30, 41, 59, 0.7) !important;
+        backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 20px; margin-bottom: 15px;
     }
     
+    /* 輸入框與按鈕 */
     .stTextInput input, .stNumberInput input, .stSelectbox > div > div { 
         background-color: rgba(15, 23, 42, 0.8) !important; color: #e2e8f0 !important; border: 1px solid #475569 !important; border-radius: 8px; 
     }
-    
     .stButton>button { background: linear-gradient(to right, #2563eb, #3b82f6); color: white; border: none; border-radius: 8px; font-weight: 600; }
     
-   /* 指標數值：改為純白、字體放大、加入白色霓虹發光效果 */
+    /* =================【全新升級：純白數字與標題】================= */
+    /* 指標數值：改為純白、字體放大、發光 */
     div[data-testid="stMetricValue"] { 
         font-family: 'JetBrains Mono', monospace; 
         color: #ffffff !important; 
@@ -57,7 +55,7 @@ st.markdown("""
         text-shadow: 0 0 12px rgba(255, 255, 255, 0.6); 
     }
     
-   /* 強制將指標標題 (MW, LogP 等) 及其內部所有層級的文字改為純白色、加粗、微放大 */
+    /* 強制將指標標題 (MW, LogP 等) 改為純白色、加粗、微放大 */
     div[data-testid="stMetricLabel"], 
     div[data-testid="stMetricLabel"] * { 
         color: #ffffff !important; 
@@ -66,11 +64,12 @@ st.markdown("""
         letter-spacing: 1px;
         text-shadow: 0 0 5px rgba(255,255,255,0.3);
     }
-    
+    /* ========================================================= */
+
+    /* 內部警示與風險標籤 */
     .internal-warning {
         background-color: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 20px; font-weight: 600; letter-spacing: 0.5px;
     }
-    
     .risk-high { color: #ef4444; font-weight: bold; }
     .risk-medium { color: #f59e0b; font-weight: bold; }
     .risk-low { color: #10b981; font-weight: bold; }
