@@ -93,17 +93,21 @@ class PublicDatabaseAPI:
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·即時查詢】完全依賴 API 獲取最新結構"""
+        """【真·即時查詢】不依賴字典，直接從 PubChem 獲取最新結構"""
         import urllib.parse
         clean_query = identifier.strip()
         try:
+            # 1. 嘗試精確搜尋，失敗則自動切換至同義詞搜尋
             c = pcp.get_compounds(clean_query, id_type)
             if not c:
                 c = pcp.get_compounds(clean_query, 'searchtype=synonym')
             if not c: return None
+            
             comp = c[0]
             smiles = comp.isomeric_smiles or comp.canonical_smiles
             mol = Chem.MolFromSmiles(smiles)
+            
+            # 即時計算物化性質
             return {
                 'cid': comp.cid, 'name': clean_query.title(), 'smiles': smiles,
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
@@ -112,45 +116,48 @@ class PublicDatabaseAPI:
             return None
 
     def get_clinical_summary(self, drug_name):
-        """【修正版】確保縮排正確，實現即時臨床背景抓取"""
+        """【臨床實時抓取】對接 Wikipedia API 獲取最新藥理資訊"""
         import urllib.parse
         search_name = drug_name.strip()
         try:
-            # 即時連線 Wikipedia API
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name)}"
             res = requests.get(url, timeout=10)
             if res.status_code == 200:
                 return res.json().get('extract', "暫無摘要。")
             
-            # 針對 BrainX 專案藥物的即時回退說明
+            # 針對專案關鍵藥物的動態背景邏輯
             drug_lower = search_name.lower()
             if "cephapirin" in drug_lower or "ceftriaxone" in drug_lower:
                 return (
-                    "**研發背景提示：** 此分子屬於 Beta-lactam 類結構。在神經保護研究中，"
-                    "這類結構被證實能誘導星狀細胞 (Astrocyte) 上的 **EAAT2 (GLT-1)** 表達。"
+                    "**研發背景提示：** 此分子屬於 Beta-lactam 類結構。"
+                    "在神經保護研究中，這類結構被證實能誘導星狀細胞 (Astrocyte) 上的 **EAAT2 (GLT-1)** 表達。"
                 )
             return f"系統已嘗試即時檢索 '{search_name}'，但全球臨床資料庫暫無匹配紀錄。"
         except:
             return "連線至臨床資料庫超時，請檢查網路設定。"
 
     def get_modification_suggestions(self, result):
-        """針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
+        """【自動診斷】針對神經藥物入腦能力 (BBB) 的修飾建議"""
         logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
         suggestions = []
+        
+        # 依據 TPSA 與 LogP 給予藥化建議
         if tpsa > 90:
             suggestions.append("⚠️ **TPSA 過高**: 建議進行結構修飾以提升 BBB 穿透力。")
         if logp < 1.0:
             suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
+        
         if not suggestions:
             suggestions.append("✅ **結構參數理想**: 符合 CNS 藥物開發準則。")
         return suggestions
 
     def predict_targets(self, smiles, drug_name):
-        """【真·即時運算】ChEMBL 資料庫現場產出 AD/PD 靶點分析"""
+        """【真·實時運算】ChEMBL 資料庫現場執行相似度與靶點比對"""
         import urllib.parse
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
+            # 現場執行相似度比對 (運算時間約 10-30 秒)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
             
             targets_map = {}
@@ -163,6 +170,7 @@ class PublicDatabaseAPI:
                         for act in act_res.json().get('activities', []):
                             t_name = act.get('target_pref_name')
                             species = act.get('target_organism', 'Unknown')
+                            # 針對神經研發核心靶點進行權重加強
                             if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
                                 display_name = f"{t_name} [{species}]"
                                 targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * 5.0)
