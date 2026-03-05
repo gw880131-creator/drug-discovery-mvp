@@ -280,7 +280,7 @@ def main():
                     st.markdown("### 🛠️ AI Chemical Modification Suggestions")
                     mod_suggestions = public_api.get_modification_suggestions(result)
                     for advice in mod_suggestions:
-                    st.info(advice)
+                        st.info(advice)
                     # === 區塊 2: AI 靶點預測 (全新功能) ===
                     st.markdown("### 🎯 2️⃣ AI Target Prediction (Ligand-Based)")
                     targets_data = public_api.predict_targets(result['smiles'], result['name'])
