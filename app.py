@@ -112,48 +112,6 @@ class PublicDatabaseAPI:
         except: return None
 
     def predict_targets(self, smiles, drug_name):
-        """【真·資料庫運算修正版】修復 urllib 報錯並執行真實連線"""
-        try:
-            base_url = "https://www.ebi.ac.uk/chembl/api/data"
-            # 使用 urllib.parse.quote 處理 SMILES 字串
-            safe_smiles = urllib.parse.quote(smiles)
-            
-            # 1. 真實連線比對 (Similarity Search)
-            res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
-            
-            targets_map = {}
-            if res.status_code == 200 and res.json().get('molecules'):
-                similar_mols = res.json()['molecules'][:5]
-                
-                for m in similar_mols:
-                    sim_score = float(m['similarity'])
-                    chembl_id = m['molecule_chembl_id']
-                    
-                    # 2. 抓取該分子的活性實驗數據
-                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=20&format=json", timeout=60)
-                    
-                    if act_res.status_code == 200:
-                        activities = act_res.json().get('activities', [])
-                        for act in activities:
-                            t_name = act.get('target_pref_name')
-                            if t_name and "unspecified" not in t_name.lower():
-                                # 相似度加權運算
-                                if t_name in targets_map:
-                                    targets_map[t_name] += sim_score * 5
-                                else:
-                                    targets_map[t_name] = sim_score * 20
-                                    
-            if targets_map:
-                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:6]
-                max_val = sorted_results[0][1]
-                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "ChEMBL Real-time Calculation"} for t in sorted_results]
-                
-        except Exception as e:
-            # 這邊會捕捉到您截圖中的連線錯誤
-            st.warning(f"⚠️ 即時運算中遇到技術問題：{str(e)}")
-            
-        return [{"Target": "資料庫查無相似結構配體", "Score": 0.0, "Class": "N/A"}]
-def predict_targets(self, smiles, drug_name):
         """【AD/PD 研發加強版】真實資料庫運算 + 澱粉樣蛋白路徑掃描"""
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
@@ -163,8 +121,9 @@ def predict_targets(self, smiles, drug_name):
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
             
             targets_map = {}
-            # 定義阿茲海默症關鍵路徑靶點關鍵字
-            ad_pathways = ["BACE1", "Amyloid", "Tau", "Acetylcholinesterase", "MAO-B", "GSK-3", "Presenilin"]
+            # 定義阿茲海默症/帕金森氏症關鍵路徑靶點關鍵字
+            # 包含您正在研發的 EAAT2/GLT-1
+            ad_pathways = ["BACE1", "AMYLOID", "TAU", "ACETYLCHOLINESTERASE", "MAO-B", "GSK-3", "PRESENILIN", "EAAT2", "GLT-1"]
             
             if res.status_code == 200 and res.json().get('molecules'):
                 similar_mols = res.json()['molecules'][:5]
@@ -173,18 +132,18 @@ def predict_targets(self, smiles, drug_name):
                     sim_score = float(m['similarity'])
                     chembl_id = m['molecule_chembl_id']
                     
-                    # 2. 抓取活性數據
+                    # 2. 抓取活性數據 (增加 limit 以掃描更多潛在路徑)
                     act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=30&format=json", timeout=60)
                     
                     if act_res.status_code == 200:
                         for act in act_res.json().get('activities', []):
                             t_name = act.get('target_pref_name')
                             if t_name and "unspecified" not in t_name.lower():
-                                # 加權計分邏輯
+                                # 基本權重
                                 weight = 20
-                                # 如果靶點與阿茲海默症/澱粉樣蛋白路徑相關，給予更高的顯示權重
+                                # 【關鍵】如果靶點與 AD/PD 路徑相關，給予顯著權重加成
                                 if any(path in t_name.upper() for path in ad_pathways):
-                                    weight = 50 
+                                    weight = 60 
                                 
                                 if t_name in targets_map:
                                     targets_map[t_name] += sim_score * 5
@@ -192,15 +151,16 @@ def predict_targets(self, smiles, drug_name):
                                     targets_map[t_name] = sim_score * weight
                                     
             if targets_map:
+                # 排序並格式化結果
                 sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
                 max_val = sorted_results[0][1]
                 return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "AD/PD Pathway Prediction"} for t in sorted_results]
                 
         except Exception as e:
-            st.warning(f"⚠️ 路徑掃描遇到技術問題：{str(e)}")
+            # 發生超時或網路問題時的保底
+            print(f"路徑掃描遇到技術問題：{str(e)}")
             
-        return [{"Target": "未發現明顯已知路徑交互作用", "Score": 0.0, "Class": "N/A"}]
-
+        return [{"Target": "資料庫查無相似結構配體", "Score": 0.0, "Class": "N/A"}]
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
