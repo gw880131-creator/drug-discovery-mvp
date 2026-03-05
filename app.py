@@ -89,11 +89,11 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
-        # 針對神經退化性疾病專案鎖定關鍵靶點
+        # 針對神經退化性疾病專案鎖定關鍵靶點 (如 EAAT2, BACE1 等)
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·無感查詢】自動修復大小寫與鹽類名稱"""
+        """【即時查詢】自動修復名稱並獲取分子結構"""
         import urllib.parse
         clean_query = identifier.strip()
         try:
@@ -112,40 +112,75 @@ class PublicDatabaseAPI:
             return None
 
     def get_clinical_summary(self, drug_name):
-        """【臨床強化】整合 Wikipedia 摘要與專案備案說明"""
+        """整合 Wikipedia 摘要與專案備案說明"""
         try:
             url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(drug_name)}"
             res = requests.get(url, timeout=10)
             if res.status_code == 200:
                 return res.json().get('extract', "暫無摘要。")
             
-            # 針對專案藥物的備案說明
             if "cephapirin" in drug_name.lower():
                 return "Cephapirin 是一種第一代頭孢菌素。在神經研發領域，其結構可用於研究對穀氨酸轉運體 (EAAT2) 的潛在誘導作用。"
             return "查無此藥物的臨床紀錄。"
         except:
             return "連線超時，請檢查網路環境。"
 
-    # --- 修正縮排後的功能函數 ---
     def get_modification_suggestions(self, result):
-        """【專案特化】針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
+        """針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
         logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
         suggestions = []
         
-        # 1. 針對血腦屏障 (BBB) 穿透力的診斷
         if tpsa > 90:
             suggestions.append("⚠️ **TPSA 過高**: 建議移除氫鍵給體 (HBD) 或進行酯化以提升 BBB 穿透力。")
         if logp < 1.0:
             suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 或甲基以增強穿透細胞膜的能力。")
-        
-        # 2. 針對分子量優化
         if mw > 500:
             suggestions.append("🔬 **分子量優化**: 結構較大可能影響擴散，建議評估側鏈修簡或前藥設計。")
-            
         if not suggestions:
             suggestions.append("✅ **結構參數理想**: 目前性質符合中樞神經系統 (CNS) 藥物開發準則。")
             
         return suggestions
+
+    def predict_targets(self, smiles, drug_name):
+        """【核心功能】ChEMBL 資料庫即時運算 + AD/PD 路徑加權"""
+        try:
+            base_url = "https://www.ebi.ac.uk/chembl/api/data"
+            safe_smiles = urllib.parse.quote(smiles)
+            # 1. 執行結構相似度搜尋
+            res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
+            
+            targets_map = {}
+            if res.status_code == 200 and res.json().get('molecules'):
+                similar_mols = res.json()['molecules'][:5]
+                for m in similar_mols:
+                    sim_score = float(m['similarity'])
+                    # 2. 抓取活性數據
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=20&format=json", timeout=60)
+                    if act_res.status_code == 200:
+                        for act in act_res.json().get('activities', []):
+                            t_name = act.get('target_pref_name')
+                            species = act.get('target_organism', 'Unknown')
+                            if t_name and "unspecified" not in t_name.lower():
+                                weight = 1.0
+                                # 針對您在 BrainX 負責的神經靶點加權 (如 EAAT2/GLT-1)
+                                if any(key in t_name.upper() for key in self.ad_pd_keys):
+                                    weight = 5.0
+                                
+                                display_name = f"{t_name} [{species}]"
+                                if display_name in targets_map:
+                                    targets_map[display_name] += sim_score * weight
+                                else:
+                                    targets_map[display_name] = sim_score * weight
+                                    
+            if targets_map:
+                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
+                max_val = sorted_results[0][1]
+                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "ChEMBL Real-time"} for t in sorted_results]
+                
+        except Exception as e:
+            print(f"靶點預測運算失敗: {e}")
+            
+        return [{"Target": "無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
