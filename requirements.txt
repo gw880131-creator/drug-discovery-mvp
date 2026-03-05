@@ -1,8 +1,10 @@
 streamlit
 pandas
-rdkit-pypi  # 注意：在雲端環境通常使用 rdkit-pypi
-py3Dmol
-stmol
+numpy
 plotly
 requests
+rdkit
+py3Dmol
+stmol
 pubchempy
+chembl_webresource_client
