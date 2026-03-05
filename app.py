@@ -89,93 +89,73 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
-        # 針對神經退化性疾病專案鎖定關鍵靶點 (如 EAAT2, BACE1 等)
+        # 鎖定您的研究專案核心靶點 (AD/PD 相關)
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【即時查詢】自動修復名稱並獲取分子結構"""
+        """【真·即時查詢】完全依賴 API 獲取最新結構，具備自動容錯與同義詞檢索"""
         import urllib.parse
         clean_query = identifier.strip()
+        
         try:
+            # 1. 第一波：精確名稱查詢
             c = pcp.get_compounds(clean_query, id_type)
+            
+            # 2. 第二波：自動嘗試同義詞檢索 (解決 Cephapirin 類藥物解析失敗)
             if not c:
                 c = pcp.get_compounds(clean_query, 'searchtype=synonym')
+                
             if not c: return None
+            
             comp = c[0]
+            # 即時獲取最新的 SMILES 結構
             smiles = comp.isomeric_smiles or comp.canonical_smiles
+            # 利用 RDKit 現場解析物理化學性質
             mol = Chem.MolFromSmiles(smiles)
+            if not mol: return None 
+            
             return {
-                'cid': comp.cid, 'name': clean_query.title(), 'smiles': smiles,
-                'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
+                'cid': comp.cid,
+                'name': clean_query.title(),
+                'smiles': smiles,
+                'mw': Descriptors.MolWt(mol),
+                'logp': Descriptors.MolLogP(mol),
+                'tpsa': Descriptors.TPSA(mol)
             }
-        except Exception:
+        except Exception as e:
+            # 即時回報 API 錯誤原因
+            st.error(f"PubChem API 即時連線失敗: {str(e)}")
             return None
 
-    def get_clinical_summary(self, drug_name):
-        """【研發特化版】整合 Wikipedia 與神經藥理學背景預設"""
-        import urllib.parse
-        search_name = drug_name.strip()
-        
-        try:
-            # 1. 嘗試搜尋 Wikipedia
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name)}"
-            res = requests.get(url, timeout=10)
-            if res.status_code == 200:
-                return res.json().get('extract', "暫無摘要。")
-            
-            # 2. 自動識別研發關鍵藥物 (針對您的 AD/PD 專案)
-            drug_lower = search_name.lower()
-            if "cephapirin" in drug_lower or "ceftriaxone" in drug_lower:
-                return (
-                    "**研發背景建議：** 本分子屬於 Beta-lactam 類抗生素。"
-                    "在神經保護研究中，這類結構被證實能誘導星狀細胞（Astrocyte）上 **EAAT2 (GLT-1)** 的表達。"
-                    "這對於改善阿茲海默症或帕金森氏症中的穀氨酸毒性（Glutamate excitotoxicity）具有潛在臨床價值。"
-                )
-            
-            return f"系統已嘗試檢索 '{search_name}'，但全球臨床資料庫暫無直接匹配的簡要紀錄。建議透過 ChEMBL 靶點預測功能分析其藥理活性。"
-        except:
-            return "連線至臨床資料庫超時，請檢查網路設定。"
-
-    def get_modification_suggestions(self, result):
-        """針對神經藥物入腦能力與 EAAT2 調節的修飾建議"""
-        logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
-        suggestions = []
-        
-        if tpsa > 90:
-            suggestions.append("⚠️ **TPSA 過高**: 建議移除氫鍵給體 (HBD) 或進行酯化以提升 BBB 穿透力。")
-        if logp < 1.0:
-            suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 或甲基以增強穿透細胞膜的能力。")
-        if mw > 500:
-            suggestions.append("🔬 **分子量優化**: 結構較大可能影響擴散，建議評估側鏈修簡或前藥設計。")
-        if not suggestions:
-            suggestions.append("✅ **結構參數理想**: 目前性質符合中樞神經系統 (CNS) 藥物開發準則。")
-            
-        return suggestions
-
     def predict_targets(self, smiles, drug_name):
-        """【核心功能】ChEMBL 資料庫即時運算 + AD/PD 路徑加權"""
+        """【真·即時運算】完全由 ChEMBL 資料庫現場產出 AD/PD 相關靶點分析"""
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
-            # 1. 執行結構相似度搜尋
+            
+            # 現場執行結構相似度運算 (這會花費較多時間，因為是真實的全球資料庫比對)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
             
             targets_map = {}
+            
             if res.status_code == 200 and res.json().get('molecules'):
                 similar_mols = res.json()['molecules'][:5]
                 for m in similar_mols:
                     sim_score = float(m['similarity'])
-                    # 2. 抓取活性數據
+                    # 即時抓取相似分子的生物活性紀錄
                     act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=20&format=json", timeout=60)
+                    
                     if act_res.status_code == 200:
                         for act in act_res.json().get('activities', []):
                             t_name = act.get('target_pref_name')
-                            species = act.get('target_organism', 'Unknown')
+                            # 獲取原始數據中的測試物種 (Species)，不進行錯誤翻譯
+                            species = act.get('target_organism', 'Unknown Species')
+                            
                             if t_name and "unspecified" not in t_name.lower():
                                 weight = 1.0
-                                # 針對您在 BrainX 負責的神經靶點加權 (如 EAAT2/GLT-1)
+                                # 現場偵測是否符合 BrainX 神經藥物核心靶點
                                 if any(key in t_name.upper() for key in self.ad_pd_keys):
-                                    weight = 5.0
+                                    weight = 5.0 # 提升顯示優先度
                                 
                                 display_name = f"{t_name} [{species}]"
                                 if display_name in targets_map:
@@ -186,12 +166,12 @@ class PublicDatabaseAPI:
             if targets_map:
                 sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
                 max_val = sorted_results[0][1]
-                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "ChEMBL Real-time"} for t in sorted_results]
+                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "Real-time Prediction"} for t in sorted_results]
                 
         except Exception as e:
-            print(f"靶點預測運算失敗: {e}")
+            st.warning(f"ChEMBL 即時運算遇到連線波動: {str(e)}")
             
-        return [{"Target": "無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
+        return [{"Target": "未發現明顯相似結構數據", "Score": 0.0, "Class": "N/A"}]
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
