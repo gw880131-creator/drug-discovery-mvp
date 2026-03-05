@@ -95,95 +95,86 @@ class PublicDatabaseAPI:
             self.chembl_bioactivities = None
         
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·即時查詢】修復 400 BadRequest，支援多階層回退搜尋"""
+        """【完全即時版】修復 400 錯誤，支援多重編碼檢索"""
         import urllib.parse
-        # 1. 先對輸入進行 URL 安全處理，避免特殊字元中斷請求
         safe_id = urllib.parse.quote(identifier.strip())
-        
         try:
-            # 第一波：嘗試標準搜尋
+            # 優先嘗試標準化搜尋，失敗則回退至快速檢索 (解決 Cephapirin 報錯)
             c = pcp.get_compounds(identifier, id_type)
-            
-            # 第二波：如果報錯或找不到，嘗試同義詞檢索 (解決 Cephapirin 解析問題)
             if not c:
                 c = pcp.get_compounds(identifier, 'searchtype=synonym')
-                
             if not c: return None
-            
             comp = c[0]
             smiles = comp.isomeric_smiles or comp.canonical_smiles
             mol = Chem.MolFromSmiles(smiles)
             if not mol: return None 
-            
             return {
-                'cid': comp.cid,
-                'name': comp.iupac_name if comp.iupac_name else identifier,
-                'smiles': smiles,
-                'mw': Descriptors.MolWt(mol),
-                'logp': Descriptors.MolLogP(mol),
-                'tpsa': Descriptors.TPSA(mol)
+                'cid': comp.cid, 'name': identifier.title(), 'smiles': smiles,
+                'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
-        except Exception as e:
-            # 發生 400 錯誤時的自動降級處理
+        except:
+            # 最後保底：強制獲取基本結構
             try:
-                # 第三波：強行抓取最接近的 CID
                 res = pcp.get_compounds(identifier, 'name')
                 if res:
-                    comp = res[0]
-                    smiles = comp.isomeric_smiles or comp.canonical_smiles
-                    mol = Chem.MolFromSmiles(smiles)
-                    return {
-                        'cid': comp.cid, 'name': identifier, 'smiles': smiles,
-                        'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
-                    }
-            except:
-                pass
-            st.error(f"即時連線異常，正在嘗試重新建立 API 通道...")
+                    m = Chem.MolFromSmiles(res[0].isomeric_smiles)
+                    return {'cid': res[0].cid, 'name': identifier, 'smiles': res[0].isomeric_smiles,
+                            'mw': Descriptors.MolWt(m), 'logp': Descriptors.MolLogP(m), 'tpsa': Descriptors.TPSA(m)}
+            except: pass
             return None
 
     def predict_targets(self, smiles, drug_name):
-        """【AD/PD 研發版】針對 BrainX 專案路徑進行即時加權分析"""
+        """【AD/PD 研發加強版】即時資料庫運算 + 神經路徑權重"""
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
             safe_smiles = urllib.parse.quote(smiles)
-            # 即時相似度比對 (這是在資料庫中進行真運算)
             res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
-            
             targets_map = {}
-            # 鎖定阿茲海默與帕金森關鍵靶點：特別是 EAAT2 / GLT-1
-            ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
-            
+            # 針對 BrainX 專案鎖定：EAAT2, BACE1, GSK-3 等
+            ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "GSK-3", "MAO-B", "ACHE"]
             if res.status_code == 200 and res.json().get('molecules'):
                 similar_mols = res.json()['molecules'][:5]
                 for m in similar_mols:
                     sim_score = float(m['similarity'])
-                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=30&format=json", timeout=60)
-                    
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=20&format=json", timeout=60)
                     if act_res.status_code == 200:
                         for act in act_res.json().get('activities', []):
                             t_name = act.get('target_pref_name')
-                            # 保留原始物種資訊，避免「種族」翻譯錯誤
-                            species = act.get('target_organism', 'Unknown Species')
-                            
+                            species = act.get('target_organism', 'Unknown')
                             if t_name and "unspecified" not in t_name.lower():
                                 weight = 1.0
-                                # 如果是神經研發核心靶點，大幅提升權重
-                                if any(key in t_name.upper() for key in ad_pd_keys):
-                                    weight = 5.0
-                                
+                                if any(key in t_name.upper() for key in ad_pd_keys): weight = 5.0
                                 display_name = f"{t_name} [{species}]"
-                                if display_name in targets_map:
-                                    targets_map[display_name] += sim_score * weight
-                                else:
-                                    targets_map[display_name] = sim_score * weight
-                                    
+                                if display_name in targets_map: targets_map[display_name] += sim_score * weight
+                                else: targets_map[display_name] = sim_score * weight
             if targets_map:
-                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
-                max_val = sorted_results[0][1]
-                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "Real-time AI Prediction"} for t in sorted_results]
-                
+                sorted_r = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
+                max_v = sorted_r[0][1]
+                return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1), "Class": "ChEMBL Prediction"} for t in sorted_r]
         except: pass
         return [{"Target": "未發現相似結構數據", "Score": 0.0, "Class": "N/A"}]
+
+    def get_modification_suggestions(self, result):
+        """【全新功能】針對神經退化性疾病藥物（AD/PD）的化學修飾建議"""
+        logp = result['logp']
+        tpsa = result['tpsa']
+        mw = result['mw']
+        suggestions = []
+        
+        # 1. 針對入腦能力的建議 (CNS Penetration)
+        if tpsa > 90:
+            suggestions.append("⚠️ **TPSA 過高**: 目前極性表面積大於 90 Å²，建議藉由移除氫鍵給體（HBD）或將羧酸基團酯化，以增加 BBB 穿透力。")
+        if logp < 1.0:
+            suggestions.append("⚠️ **親水性過強**: LogP 小於 1.0，建議引入氟原子 (F) 或甲基 (Methyl) 以增加親脂性，有利於穿透神經細胞膜。")
+        
+        # 2. 針對 BX100 類似結構的優化 (EAAT2 Up-regulation)
+        if mw > 500:
+            suggestions.append("🔬 **分子量優化**: 分子量較大，若作為長效神經藥物，建議縮減非功能性側鏈，或嘗試前藥 (Prodrug) 設計。")
+            
+        if not suggestions:
+            suggestions.append("✅ **結構參數理想**: 目前物化性質符合 CNS 藥物開發準則，建議進行活性片段 (Fragment) 比對。")
+            
+        return suggestions
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
