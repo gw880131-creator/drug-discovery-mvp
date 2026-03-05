@@ -99,10 +99,41 @@ class PublicDatabaseAPI:
             return {'cid': comp.cid, 'name': comp.iupac_name or (comp.synonyms[0] if comp.synonyms else identifier), 'smiles': Chem.MolToSmiles(mol), 'mw': comp.molecular_weight, 'logp': comp.xlogp, 'tpsa': comp.tpsa}
         except: return None
         
-def predict_targets(self, smiles, drug_name):
-        """【全新功能】基於結構相似度的配體靶點預測 (含 5 分鐘超長運算設定)"""
+class PublicDatabaseAPI:
+    def __init__(self):
+        self.chembl_bioactivities = new_client.activity
         
-        # 1. 建立預設的高信心度字典 (確保 Live Demo 絕對不會跑出空白)
+    def query_pubchem(self, identifier, id_type="name"):
+        """強化版 PubChem 查詢，先查本地字典防斷網"""
+        identifier_clean = identifier.lower().strip()
+        if identifier_clean in SAFE_DEMO_DB:
+            smiles = SAFE_DEMO_DB[identifier_clean]
+            mol = Chem.MolFromSmiles(smiles)
+            return {
+                'name': identifier.title(),
+                'smiles': smiles,
+                'mw': Descriptors.MolWt(mol),
+                'logp': Descriptors.MolLogP(mol),
+                'tpsa': Descriptors.TPSA(mol)
+            }
+        try:
+            c = pcp.get_compounds(identifier, id_type)
+            if not c: return None
+            comp = c[0]
+            mol = Chem.MolFromSmiles(comp.isomeric_smiles or comp.canonical_smiles)
+            if not mol: return None 
+            return {
+                'cid': comp.cid,
+                'name': comp.iupac_name or (comp.synonyms[0] if comp.synonyms else identifier),
+                'smiles': Chem.MolToSmiles(mol),
+                'mw': comp.molecular_weight,
+                'logp': comp.xlogp,
+                'tpsa': comp.tpsa
+            }
+        except: return None
+
+    def predict_targets(self, smiles, drug_name):
+        """【5 分鐘運算版】配體靶點預測功能"""
         demo_targets = {
             "donepezil": [{"Target": "Acetylcholinesterase", "Score": 98.5, "Class": "Enzyme"}, {"Target": "Butyrylcholinesterase", "Score": 75.2, "Class": "Enzyme"}, {"Target": "Sigma-1 receptor", "Score": 45.0, "Class": "Receptor"}],
             "aspirin": [{"Target": "Cyclooxygenase-1", "Score": 95.0, "Class": "Enzyme"}, {"Target": "Cyclooxygenase-2", "Score": 88.5, "Class": "Enzyme"}],
@@ -116,49 +147,29 @@ def predict_targets(self, smiles, drug_name):
         }
         
         name_clean = drug_name.lower().strip()
-        
-        # 攔截 Demo 藥物，直接回傳精美數據
         for key in demo_targets:
-            if key in name_clean: 
-                return demo_targets[key]
+            if key in name_clean: return demo_targets[key]
             
-        # 2. 真實連線預測邏輯 (將 Timeout 延長至 300 秒 = 5 分鐘)
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
-            
-            # 第一階段：結構相似度比對 (這步最吃效能，放寬到 300 秒)
             res = requests.get(f"{base_url}/similarity/{urllib.parse.quote(smiles)}/80?format=json", timeout=300)
             targets = {}
-            
             if res.status_code == 200 and res.json().get('molecules'):
-                mols = res.json()['molecules'][:3] # 取前三大相似分子
+                mols = res.json()['molecules'][:3]
                 for m in mols:
                     sim = float(m['similarity'])
-                    
-                    # 第二階段：抓取相似分子的靶點數據 (這步相對快，放寬到 60 秒)
                     act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=10&format=json", timeout=60)
-                    
                     if act_res.status_code == 200:
                         for act in act_res.json().get('activities', []):
-                            target_name = act.get('target_pref_name')
-                            # 排除不明確的結果
-                            if target_name and "unspecified" not in target_name.lower():
-                                if target_name in targets: 
-                                    targets[target_name] += sim * 10
-                                else: 
-                                    targets[target_name] = sim * 50
-                                    
+                            t_name = act.get('target_pref_name')
+                            if t_name and "unspecified" not in t_name.lower():
+                                if t_name in targets: targets[t_name] += sim * 10
+                                else: targets[t_name] = sim * 50
             if targets:
-                # 排序並格式化
-                sorted_targets = sorted(targets.items(), key=lambda x: x[1], reverse=True)[:5]
-                return [{"Target": t[0], "Score": min(99.9, t[1]), "Class": "Predicted API"} for t in sorted_targets]
-                
-        except Exception as e:
-            # 發生超時或錯誤時靜默處理，您可以在 Streamlit Cloud 後台的 Logs 看到這個錯誤
-            print(f"ChEMBL API 運算錯誤或超時: {e}")
-        
-        # 3. 如果算滿 5 分鐘還是找不到相似藥物，回傳「需要濕實驗驗證」
-        return [{"Target": "Novel Target (需進一步濕實驗驗證)", "Score": 35.0, "Class": "Unknown"}]
+                sorted_t = sorted(targets.items(), key=lambda x: x[1], reverse=True)[:5]
+                return [{"Target": t[0], "Score": min(99.9, t[1]), "Class": "Predicted API"} for t in sorted_t]
+        except: pass
+        return [{"Target": "Novel Target (需進一步實驗驗證)", "Score": 35.0, "Class": "Unknown"}]
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
