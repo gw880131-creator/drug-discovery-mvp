@@ -18,6 +18,7 @@ from stmol import showmol
 # 匯入 RDKit 相關模組
 from rdkit import Chem
 from rdkit.Chem import AllChem, Descriptors, QED, DataStructs
+from rdkit.Chem import Fragments
 import urllib.parse
 import time
 
