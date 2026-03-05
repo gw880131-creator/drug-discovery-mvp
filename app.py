@@ -33,9 +33,14 @@ st.markdown("""
     
     .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #e2e8f0; font-family: 'Inter', sans-serif; }
     
-    div[data-testid="stExpander"], div.css-1r6slb0, .metric-card {
-        background: rgba(30, 41, 59, 0.7) !important;
-        backdrop-filter: blur(12px); border: 1px solid rgba(148, 163, 184, 0.1); border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 20px; margin-bottom: 15px;
+  /* 強制將指標標題 (MW, LogP 等) 及其內部所有層級的文字改為純白色、加粗、微放大 */
+    div[data-testid="stMetricLabel"], 
+    div[data-testid="stMetricLabel"] * { 
+        color: #ffffff !important; 
+        font-size: 1.1rem !important; 
+        font-weight: 800 !important;
+        letter-spacing: 1px;
+        text-shadow: 0 0 5px rgba(255,255,255,0.3);
     }
     
     .stTextInput input, .stNumberInput input, .stSelectbox > div > div { 
