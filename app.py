@@ -57,12 +57,14 @@ st.markdown("""
         text-shadow: 0 0 12px rgba(255, 255, 255, 0.6); 
     }
     
-    /* 指標標題 (如 MW, LogP)：改為亮白色、微放大並加粗 */
-    div[data-testid="stMetricLabel"] { 
+   /* 強制將指標標題 (MW, LogP 等) 及其內部所有層級的文字改為純白色、加粗、微放大 */
+    div[data-testid="stMetricLabel"], 
+    div[data-testid="stMetricLabel"] * { 
         color: #ffffff !important; 
-        font-size: 1rem !important; 
-        font-weight: 700 !important;
-        letter-spacing: 0.5px;
+        font-size: 1.1rem !important; 
+        font-weight: 800 !important;
+        letter-spacing: 1px;
+        text-shadow: 0 0 5px rgba(255,255,255,0.3);
     }
     
     .internal-warning {
