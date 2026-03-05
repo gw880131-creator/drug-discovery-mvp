@@ -89,11 +89,11 @@ SAFE_DEMO_DB = {
 # ==================== 公開資料庫與靶點預測 API ====================
 class PublicDatabaseAPI:
     def __init__(self):
-        # 針對神經退化性疾病專案鎖定關鍵靶點 (如 EAAT2, BACE1 等)
+        # 鎖定您的研究專案核心靶點
         self.ad_pd_keys = ["EAAT2", "GLT-1", "BACE1", "AMYLOID", "TAU", "MAO-B", "GSK-3", "ACHE"]
 
     def query_pubchem(self, identifier, id_type="name"):
-        """【真·即時查詢】不依賴字典，直接從 PubChem 獲取最新結構"""
+        """【真·即時查詢】自動解析結構"""
         import urllib.parse
         clean_query = identifier.strip()
         try:
@@ -101,100 +101,82 @@ class PublicDatabaseAPI:
             if not c:
                 c = pcp.get_compounds(clean_query, 'searchtype=synonym')
             if not c: return None
-            
             comp = c[0]
             smiles = comp.isomeric_smiles or comp.canonical_smiles
             mol = Chem.MolFromSmiles(smiles)
-            
             return {
                 'cid': comp.cid, 'name': clean_query.title(), 'smiles': smiles,
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
-        except Exception:
-            return None
+        except Exception: return None
 
     def get_clinical_summary(self, drug_name):
-        """【臨床實時抓取】對接 Wikipedia API 獲取最新藥理資訊"""
+        """【臨床實時抓取】整合背景邏輯"""
         import urllib.parse
-        search_name = drug_name.strip()
         try:
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name)}"
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(drug_name)}"
             res = requests.get(url, timeout=10)
             if res.status_code == 200:
                 return res.json().get('extract', "暫無摘要。")
             
-            drug_lower = search_name.lower()
+            drug_lower = drug_name.lower()
             if "cephapirin" in drug_lower or "ceftriaxone" in drug_lower:
-                return (
-                    "**研發背景提示：** 此分子屬於 Beta-lactam 類結構。在神經保護研究中，"
-                    "這類結構被證實能誘導星狀細胞 (Astrocyte) 上的 **EAAT2 (GLT-1)** 表達。"
-                )
-            return f"系統已嘗試即時檢索 '{search_name}'，但全球臨床資料庫暫無匹配紀錄。"
-        except:
-            return "連線至臨床資料庫超時。"
+                return "**研發背景提示：** 此分子屬於 Beta-lactam 類結構，在研究中被證實能誘導星狀細胞 (Astrocyte) 上的 EAAT2 (GLT-1) 表達。"
+            return f"全球臨床資料庫暫無 '{drug_name}' 的匹配紀錄。"
+        except: return "連線異常。"
 
     def get_pubmed_links(self, drug_name):
-        """【全新功能】自動檢索 PubMed 關於藥物與 EAAT2/神經保護的文獻"""
+        """【PubMed 自動檢索】抓取最新的 EAAT2 相關文獻"""
         import urllib.parse
-        # 構建針對 EAAT2 與神經退化性疾病的專業檢索詞
         search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
-        encoded_term = urllib.parse.quote(search_term)
-        
         try:
-            # 呼叫 NCBI E-search API
-            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={encoded_term}&retmode=json&retmax=5"
+            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={urllib.parse.quote(search_term)}&retmode=json&retmax=5"
             res = requests.get(search_url, timeout=10)
             if res.status_code == 200:
                 id_list = res.json().get('esearchresult', {}).get('idlist', [])
-                if not id_list:
-                    return "目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。"
-                
-                links = [f"- [PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" for pmid in id_list]
-                return "\n".join(links)
-        except:
-            return "PubMed 連線異常。"
+                if not id_list: return "目前 PubMed 暫無此藥物與 EAAT2 關聯的直接文獻。"
+                return "\n".join([f"- [PMID: {pmid}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)" for pmid in id_list])
+        except: return "PubMed 連線異常。"
         return "檢索中..."
 
-    def get_modification_suggestions(self, result):
-        """【自動診斷】針對神經藥物入腦能力 (BBB) 的修飾建議"""
-        logp, tpsa, mw = result['logp'], result['tpsa'], result['mw']
-        suggestions = []
-        if tpsa > 90:
-            suggestions.append("⚠️ **TPSA 過高**: 建議進行結構修飾以提升 BBB 穿透力。")
-        if logp < 1.0:
-            suggestions.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
-        if not suggestions:
-            suggestions.append("✅ **結構參數理想**: 符合 CNS 藥物開發準則。")
-        return suggestions
-
     def predict_targets(self, smiles, drug_name):
-        """【真·實時運算】ChEMBL 資料庫現場執行靶點比對"""
+        """【優化版即時預測】自動擴大搜尋半徑以確保結果呈現"""
         import urllib.parse
         try:
             base_url = "https://www.ebi.ac.uk/chembl/api/data"
-            safe_smiles = urllib.parse.quote(smiles)
-            res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
+            # 若 80% 相似度無結果，則自動降低至 70% 擴大檢索範圍
+            for threshold in [80, 70]:
+                res = requests.get(f"{base_url}/similarity/{urllib.parse.quote(smiles)}/{threshold}?format=json", timeout=300)
+                if res.status_code == 200 and res.json().get('molecules'):
+                    similar_mols = res.json()['molecules'][:10] # 增加比對樣本數
+                    targets_map = {}
+                    for m in similar_mols:
+                        sim_score = float(m['similarity'])
+                        act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=30&format=json", timeout=60)
+                        if act_res.status_code == 200:
+                            for act in act_res.json().get('activities', []):
+                                t_name = act.get('target_pref_name')
+                                species = act.get('target_organism', 'Unknown')
+                                if t_name and "unspecified" not in t_name.lower():
+                                    weight = 5.0 if any(key in t_name.upper() for key in self.ad_pd_keys) else 1.0
+                                    display_name = f"{t_name} [{species}]"
+                                    targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * weight)
+                    
+                    if targets_map:
+                        sorted_res = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
+                        max_v = sorted_res[0][1]
+                        return [{"Target": t[0], "Score": round((t[1]/max_v)*99.5, 1), "Class": "ChEMBL Live"} for t in sorted_res]
             
-            targets_map = {}
-            if res.status_code == 200 and res.json().get('molecules'):
-                similar_mols = res.json()['molecules'][:5]
-                for m in similar_mols:
-                    sim_score = float(m['similarity'])
-                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={m['molecule_chembl_id']}&limit=20&format=json", timeout=60)
-                    if act_res.status_code == 200:
-                        for act in act_res.json().get('activities', []):
-                            t_name = act.get('target_pref_name')
-                            species = act.get('target_organism', 'Unknown')
-                            if t_name and any(key in t_name.upper() for key in self.ad_pd_keys):
-                                display_name = f"{t_name} [{species}]"
-                                targets_map[display_name] = targets_map.get(display_name, 0) + (sim_score * 5.0)
-            
-            if targets_map:
-                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
-                max_val = sorted_results[0][1]
-                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "ChEMBL Real-time"} for t in sorted_results]
         except Exception: pass
-        return [{"Target": "無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
+        return [{"Target": "擴大搜尋後仍無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
+
+    def get_modification_suggestions(self, result):
+        """入腦能力 (BBB) 修飾建議"""
+        logp, tpsa = result['logp'], result['tpsa']
+        s = []
+        if tpsa > 90: s.append("⚠️ **TPSA 過高**: 建議修飾以提升 BBB 穿透力。")
+        if logp < 1.0: s.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
+        return s if s else ["✅ **結構參數理想**"]
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
