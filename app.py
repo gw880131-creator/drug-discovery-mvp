@@ -227,7 +227,7 @@ class PublicDatabaseAPI:
         # 針對 BrainX 的 EAAT2 誘導劑研究，酸性基團是關鍵瓶頸
         if has_acid:
             suggestions.append("🚫 **關鍵瓶頸：酸性基團**。偵測到羧酸根。在生理 pH 下帶負電，這會導致分子極難穿透血腦屏障 (BBB)。")
-            suggestions.append("🔹 **策略**: 可嘗試將其置換為四唑 (Tetrazole) 或進行前藥 (Prodrug) 化，這對於 BX100 類結構至關重要。")
+            suggestions.append("🔹 **策略**: 可嘗試將其置換為四唑 (Tetrazole) 或進行前藥 (Prodrug) 化。")
             
         
         if oh_count > 2:
