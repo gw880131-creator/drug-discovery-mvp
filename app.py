@@ -135,19 +135,32 @@ class PublicDatabaseAPI:
             return papers
         except: return []
     def get_clinical_summary(self, drug_name):
-        """【臨床實時抓取】整合背景邏輯"""
+        """【全實時診斷】廢除預設文字，若百科查無則即時檢索 ChEMBL 作用機制"""
         import urllib.parse
+        search_name = drug_name.strip().capitalize()
+        
         try:
-            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(drug_name)}"
-            res = requests.get(url, timeout=10)
+            # 1. 優先嘗試 Wikipedia (臨床與通用百科)
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(search_name)}"
+            res = requests.get(wiki_url, timeout=10)
             if res.status_code == 200:
-                return res.json().get('extract', "暫無摘要。")
+                return res.json().get('extract', "找到紀錄但無摘要內容。")
             
-            drug_lower = drug_name.lower()
-            if "cephapirin" in drug_lower or "ceftriaxone" in drug_lower:
-                return "**研發背景提示：** 此分子屬於 Beta-lactam 類結構，在研究中被證實能誘導星狀細胞 (Astrocyte) 上的 EAAT2 (GLT-1) 表達。"
-            return f"全球臨床資料庫暫無 '{drug_name}' 的匹配紀錄。"
-        except: return "連線異常。"
+            # 2. 若 Wikipedia 查無結果，立即切換至 ChEMBL 進行「實時藥理機制」檢索
+            # 這樣即便 Vorinostat 沒被百科收錄，也能從生化數據中抓出它是 HDAC 抑制劑
+            chembl_url = f"https://www.ebi.ac.uk/chembl/api/data/mechanism?molecule_chembl_id__pref_name__iexact={search_name}&format=json"
+            chembl_res = requests.get(chembl_url, timeout=10)
+            
+            if chembl_res.status_code == 200:
+                mechanisms = chembl_res.json().get('mechanisms', [])
+                if mechanisms:
+                    moa_list = [f"🎯 **實時偵測機制**: {m.get('mechanism_of_action')} (作用靶點: {m.get('target_name')})" for m in mechanisms]
+                    return "Wikipedia 無紀錄，但在 ChEMBL 資料庫中偵測到以下藥理機制：\n\n" + "\n".join(moa_list)
+            
+            return f"❌ 實時檢索完成：'{search_name}' 在 Wikipedia 與 ChEMBL 機制庫中均無公開紀錄。請參考下方的 AI 靶點預測模型進行結構推估。"
+            
+        except Exception as e:
+            return f"⚠️ 實時連線異常: {str(e)}"
 
     def get_pubmed_links(self, drug_name):
         """【PubMed 自動檢索】抓取最新的 EAAT2 相關文獻"""
