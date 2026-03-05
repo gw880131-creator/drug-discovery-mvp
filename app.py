@@ -7,16 +7,17 @@ import hashlib
 from datetime import datetime
 import requests
 import pubchempy as pcp
+# --- 關鍵的這一行必須存在 ---
+from chembl_webresource_client.new_client import new_client 
+# ------------------------
 import plotly.express as px
 import plotly.graph_objects as go
 import py3Dmol
 from stmol import showmol
 
-# 強制載入 RDKit (若此處報錯，請檢查 requirements.txt)
+# 匯入 RDKit 相關模組
 from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw
-from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import Fragments
+from rdkit.Chem import AllChem, Descriptors, QED, DataStructs
 
 # ==================== 頁面設定與淺色 CSS ====================
 st.set_page_config(
