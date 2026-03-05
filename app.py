@@ -99,7 +99,7 @@ class PublicDatabaseAPI:
             return {'cid': comp.cid, 'name': comp.iupac_name or (comp.synonyms[0] if comp.synonyms else identifier), 'smiles': Chem.MolToSmiles(mol), 'mw': comp.molecular_weight, 'logp': comp.xlogp, 'tpsa': comp.tpsa}
         except: return None
         
-   def predict_targets(self, smiles, drug_name):
+def predict_targets(self, smiles, drug_name):
         """【全新功能】基於結構相似度的配體靶點預測 (含 5 分鐘超長運算設定)"""
         
         # 1. 建立預設的高信心度字典 (確保 Live Demo 絕對不會跑出空白)
