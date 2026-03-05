@@ -195,12 +195,44 @@ class PublicDatabaseAPI:
         return [{"Target": "擴大搜尋後仍無相似活性紀錄", "Score": 0.0, "Class": "N/A"}]
 
     def get_modification_suggestions(self, result):
-        """入腦能力 (BBB) 修飾建議"""
+        """【藥化專家系統】基於結構指紋與 CNS MPO 的深度運算"""
+        from rdkit.Chem import Fragments, Descriptors
+        mol = Chem.MolFromSmiles(result['smiles'])
+        
         logp, tpsa = result['logp'], result['tpsa']
-        s = []
-        if tpsa > 90: s.append("⚠️ **TPSA 過高**: 建議修飾以提升 BBB 穿透力。")
-        if logp < 1.0: s.append("⚠️ **親脂性不足**: 建議引入氟原子 (F) 增加細胞膜穿透性。")
-        return s if s else ["✅ **結構參數理想**"]
+        suggestions = []
+        
+        # 1. 執行結構特徵偵測 (這就是 Grasyon 判斷差異的關鍵)
+        oh_count = Fragments.fr_OH(mol)      # 偵測羥基數量
+        nh_count = Fragments.fr_NH0(mol) + Fragments.fr_NH1(mol) + Fragments.fr_NH2(mol) # 偵測胺基
+        f_count = result['smiles'].upper().count('F') # 偵測氟原子
+        has_acid = Fragments.fr_COO(mol) > 0 # 偵測是否有羧酸根 (BBB 大忌)
+
+        # 2. 計算 CNS MPO 基礎分數 (實時運算)
+        mpo_score = 0
+        if 1.0 < logp < 3.0: mpo_score += 1.0
+        if tpsa < 70: mpo_score += 1.0
+        if Descriptors.NumHDonors(mol) <= 1: mpo_score += 1.0
+
+        suggestions.append(f"📊 **實時 CNS MPO 指數: {mpo_score}/3.0**")
+
+        # 3. 根據「特定結構特徵」給予高度差異化的藥化策略
+        if has_acid:
+            suggestions.append("🚫 **結構性瓶頸**: 偵測到羧酸根 (Carboxylic acid)。這在生理 pH 下帶負電，極難入腦。")
+            suggestions.append("🔹 **策略**: 建議將其轉化為酯類前藥 (Prodrug) 或置換為四唑 (Tetrazole) 以優化分佈。")
+        
+        if oh_count > 2:
+            suggestions.append(f"⚠️ **氫鍵給體過剩**: 分子含有 {oh_count} 個羥基，去溶劑化能障極高。")
+            suggestions.append("🔹 **策略**: 嘗試將部分 -OH 進行烷基化或隱藏在內氫鍵中。")
+
+        if f_count == 0 and logp < 2.0:
+            suggestions.append("💡 **親脂性優化空間**: 目前分子結構缺乏氟原子。")
+            suggestions.append("🔹 **策略**: 引入 **氟原子 (F)** 可同時提升代謝穩定性並微調親脂性，這是 AD 藥物常見做法。")
+
+        if mpo_score >= 2.5 and not has_acid:
+            suggestions.append("✅ **結構參數理想**: 該分子的物化輪廓與成功入腦的中樞神經藥物高度契合。")
+            
+        return suggestions
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
     @staticmethod
