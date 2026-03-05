@@ -109,7 +109,31 @@ class PublicDatabaseAPI:
                 'mw': Descriptors.MolWt(mol), 'logp': Descriptors.MolLogP(mol), 'tpsa': Descriptors.TPSA(mol)
             }
         except Exception: return None
-
+    def get_pubmed_details(self, drug_name):
+        """【全新功能】抓取 PubMed 論文標題與連結，為研發提供即時佐證"""
+        import urllib.parse
+        # 針對 EAAT2 與神經保護路徑進行專業檢索
+        search_term = f"({drug_name}) AND (EAAT2 OR GLT-1 OR neuroprotection)"
+        try:
+            # 1. 搜尋 PMID
+            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={urllib.parse.quote(search_term)}&retmode=json&retmax=3"
+            res = requests.get(search_url, timeout=10)
+            id_list = res.json().get('esearchresult', {}).get('idlist', [])
+            
+            if not id_list: return []
+            
+            # 2. 根據 PMID 抓取標題 (Summary)
+            ids = ",".join(id_list)
+            summary_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={ids}&retmode=json"
+            sum_res = requests.get(summary_url, timeout=10)
+            result_set = sum_res.json().get('result', {})
+            
+            papers = []
+            for pmid in id_list:
+                title = result_set.get(pmid, {}).get('title', '無標題資訊')
+                papers.append({"title": title, "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"})
+            return papers
+        except: return []
     def get_clinical_summary(self, drug_name):
         """【臨床實時抓取】整合背景邏輯"""
         import urllib.parse
@@ -291,30 +315,32 @@ def main():
                     mod_suggestions = public_api.get_modification_suggestions(result)
                     for advice in mod_suggestions:
                         st.info(advice)
-                    # === 區塊 2: AI 靶點預測 (全新功能) ===
-                    st.markdown("### 🎯 2️⃣ AI Target Prediction (Ligand-Based)")
-                    targets_data = public_api.predict_targets(result['smiles'], result['name'])
+                   # === 區塊 2: AI 靶點預測與文獻連動 ===
+                    st.markdown("### 🎯 2️⃣ AI Target Prediction & PubMed Evidence")
                     
-                    col_chart, col_table = st.columns([2, 1])
+                    col_chart, col_papers = st.columns([3, 2])
+                    
                     with col_chart:
-                        # 繪製精美的 Plotly 橫向長條圖來顯示預測信心度
-                        df_targets = pd.DataFrame(targets_data)
-                        fig_t = px.bar(df_targets, x="Score", y="Target", orientation='h', 
-                                       color="Score", color_continuous_scale="Blues",
-                                       title="Predicted Protein Targets Confidence")
-                        fig_t.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='#1e293b'))
-                        st.plotly_chart(fig_t, use_container_width=True)
-                        
-                    with col_table:
-                        st.markdown("""
-                        <div style="background:rgba(255,255,255,0.8); padding:15px; border-radius:10px; border:1px solid #cbd5e1;">
-                            <h4 style="color:#1e40af; margin-top:0;">🤖 預測模型說明</h4>
-                            <p style="font-size:0.85rem; color:#475569;">
-                            本系統使用 <b>配體導向方法 (Ligand-Based)</b>。<br><br>
-                            透過將分子轉換為 Morgan Fingerprint，並比對 ChEMBL 資料庫中高相似度化合物之已知靶點，進而推算「預測信心指數」。分數越高，代表作用於該靶點的機率越大。
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        targets_data = public_api.predict_targets(result['smiles'], result['name'])
+                        if targets_data:
+                            df_targets = pd.DataFrame(targets_data)
+                            fig_t = px.bar(df_targets, x="Score", y="Target", orientation='h', 
+                                           color="Score", color_continuous_scale="Blues")
+                            fig_t.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+                            st.plotly_chart(fig_t, use_container_width=True)
+                        else:
+                            st.warning("目前資料庫無相似活性紀錄。")
+                            
+                    with col_papers:
+                        st.markdown("#### 🔬 Latest Evidence (PubMed)")
+                        paper_list = public_api.get_pubmed_details(query)
+                        if paper_list:
+                            for paper in paper_list:
+                                st.markdown(f"📄 **{paper['title']}**")
+                                st.markdown(f"🔗 [查看原文]({paper['link']})")
+                                st.divider()
+                        else:
+                            st.info("暫無直接關聯之 EAAT2 相關文獻。")
                     
                     # === 區塊 3: BOILED-Egg & 3D Viewer ===
                     st.markdown("### 3️⃣ BBB Penetration & 3D Structure")
