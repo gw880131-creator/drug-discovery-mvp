@@ -305,21 +305,14 @@ def main():
         st.caption("輸入藥物，系統將即時解析結構、預測靶點 (Target) 並評估 ADMET 風險。")
         
         query = st.text_input("Enter Drug Name or SMILES", "Donepezil")
-        
-        # 預設 result 為 None，防止 UnboundLocalError
         result = None 
 
         if st.button("🚀 Analyze & Predict", use_container_width=True):
             with st.spinner("Running AI Models and Target Prediction..."):
-                # 執行即時搜尋
                 result = public_api.query_pubchem(query, "name" if "1" not in query and "C" not in query else "smiles")
-                
                 if not result:
                     st.error("❌ 無法解析分子結構，請檢查輸入。")
 
-        # =========================================================
-        # 核心修正點：只有當 result 成功獲取後，才執行下方的 UI 渲染
-        # =========================================================
         if result:
             mol = Chem.MolFromSmiles(result['smiles'])
             
@@ -348,7 +341,7 @@ def main():
             else:
                 st.info("目前 PubMed 暫無直接關聯之研究文獻。")
 
-            # --- 區塊 1.5: 藥化修飾建議 ---
+            # --- 區塊 1.5: 藥化修飾建議 (去標籤化版本) ---
             st.markdown("### 🛠️ AI Chemical Modification Suggestions")
             mod_suggestions = public_api.get_modification_suggestions(result)
             for advice in mod_suggestions:
@@ -359,7 +352,6 @@ def main():
             col_chart, col_papers = st.columns([3, 2])
             
             with col_chart:
-                # 執行我們寫入的「人體數據」過濾與「子結構備案」邏輯
                 targets_data = public_api.predict_targets(result['smiles'], result['name'])
                 if targets_data:
                     df_targets = pd.DataFrame(targets_data)
@@ -376,16 +368,15 @@ def main():
                     for paper in pubmed_results:
                         st.markdown(f"📄 **{paper['title']}**")
                         st.divider()
-                else:
-                    st.info("暫無關聯文獻。")
 
-            # --- 區塊 3: 3D 結構 ---
+            # --- 區塊 3: 3D 結構與 BBB ---
             st.markdown("### 3️⃣ BBB Penetration & 3D Structure")
             c_chart, c_3d = st.columns(2)
             with c_chart:
                 fig = go.Figure()
-                fig.add_shape(type="circle", x0=0, y0=0, x1=6, y1=140, fillcolor="rgba(255, 204, 0, 0.2)")
+                fig.add_shape(type="circle", x0=0, y0=0, x1=6, y1=140, fillcolor="rgba(255, 204, 0, 0.2)", line_color="rgba(255, 204, 0, 0.5)")
                 fig.add_trace(go.Scatter(x=[result['logp']], y=[result['tpsa']], mode='markers+text', text=[result['name']]))
+                fig.update_layout(xaxis_title="LogP", yaxis_title="TPSA", height=350)
                 st.plotly_chart(fig, use_container_width=True)
             with c_3d:
                 pdb_data = generate_3d_pdb(mol)
@@ -396,15 +387,30 @@ def main():
                     v1.zoomTo()
                     showmol(v1, height=300, width=400)
 
-            # --- 區塊 4: ADMET 規則 ---
+            # --- 區塊 4: ADMET 規則 (卡片修復) ---
             st.markdown("### 4️⃣ ADMET Risk Assessment")
             herg_r, herg_d, _ = admet.predict_herg(mol)
             liv_r, liv_d, _ = admet.predict_liver(mol)
             bbb_r, bbb_d, _ = admet.predict_bbb(mol)
             
             col_h, col_l, col_b = st.columns(3)
-            # ... (此處保留您的卡片顯示代碼) ...
+            for col, title, risk, desc, icon in zip([col_h, col_l, col_b], 
+                                               ["🫀 hERG Risk", "🧪 Liver DILI", "🧠 BBB"], 
+                                               [herg_r, liv_r, bbb_r], 
+                                               [herg_d, liv_d, bbb_d], 
+                                               ["heart", "test-tube", "brain"]):
+                color = "#ef4444" if risk in ["High", "Low"] else "#f59e0b" if risk == "Moderate" else "#10b981"
+                col.markdown(f"""
+                <div style="background:white; border-radius:12px; padding:15px; border-top:4px solid {color}; box-shadow:0 2px 4px rgba(0,0,0,0.05);">
+                    <h4 style="margin:0;">{title}</h4>
+                    <p style="color:{color}; font-size:1.2rem; font-weight:bold; margin:5px 0;">{risk}</p>
+                    <p style="font-size:0.8rem; color:#64748b;">{desc}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-    elif page in ["🏠 Internal Dashboard", "📝 Database Settings"]:
+    elif page == "🏠 Internal Dashboard":
         st.info("此模組為內部功能演示版。")
+
+# ==================== 關鍵執行處 (確保靠左不縮排) ====================
+if __name__ == "__main__":
     main()
