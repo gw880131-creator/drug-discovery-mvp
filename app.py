@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from rdkit import Chem
-from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw
-from rdkit.Chem.Scaffolds import MurckoScaffold
 import sqlite3
 import json
 import hashlib
@@ -14,6 +11,15 @@ from chembl_webresource_client.new_client import new_client
 import plotly.express as px
 import plotly.graph_objects as go
 
+# 嘗試導入 RDKit，如果失敗則使用替代方案
+try:
+    from rdkit import Chem
+    from rdkit.Chem import AllChem, Descriptors, QED, DataStructs, Draw
+    from rdkit.Chem.Scaffolds import MurckoScaffold
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+
 # ==================== 頁面設定 ====================
 st.set_page_config(
     page_title="MedChem Pro | Enterprise R&D Platform",
@@ -21,6 +27,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 警告訊息
+if not RDKIT_AVAILABLE:
+    st.warning("⚠️ RDKit 未安裝，部分化學結構功能將使用簡化版本")
 
 # ==================== CSS 樣式 ====================
 st.markdown("""
