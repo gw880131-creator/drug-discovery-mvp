@@ -153,6 +153,53 @@ class PublicDatabaseAPI:
             st.warning(f"⚠️ 即時運算中遇到技術問題：{str(e)}")
             
         return [{"Target": "資料庫查無相似結構配體", "Score": 0.0, "Class": "N/A"}]
+        def predict_targets(self, smiles, drug_name):
+        """【AD/PD 研發加強版】真實資料庫運算 + 澱粉樣蛋白路徑掃描"""
+        try:
+            base_url = "https://www.ebi.ac.uk/chembl/api/data"
+            safe_smiles = urllib.parse.quote(smiles)
+            
+            # 1. 執行相似性搜尋 (篩選相似度 >= 80% 的已知配體)
+            res = requests.get(f"{base_url}/similarity/{safe_smiles}/80?format=json", timeout=300)
+            
+            targets_map = {}
+            # 定義阿茲海默症關鍵路徑靶點關鍵字
+            ad_pathways = ["BACE1", "Amyloid", "Tau", "Acetylcholinesterase", "MAO-B", "GSK-3", "Presenilin"]
+            
+            if res.status_code == 200 and res.json().get('molecules'):
+                similar_mols = res.json()['molecules'][:5]
+                
+                for m in similar_mols:
+                    sim_score = float(m['similarity'])
+                    chembl_id = m['molecule_chembl_id']
+                    
+                    # 2. 抓取活性數據
+                    act_res = requests.get(f"{base_url}/activity?molecule_chembl_id={chembl_id}&limit=30&format=json", timeout=60)
+                    
+                    if act_res.status_code == 200:
+                        for act in act_res.json().get('activities', []):
+                            t_name = act.get('target_pref_name')
+                            if t_name and "unspecified" not in t_name.lower():
+                                # 加權計分邏輯
+                                weight = 20
+                                # 如果靶點與阿茲海默症/澱粉樣蛋白路徑相關，給予更高的顯示權重
+                                if any(path in t_name.upper() for path in ad_pathways):
+                                    weight = 50 
+                                
+                                if t_name in targets_map:
+                                    targets_map[t_name] += sim_score * 5
+                                else:
+                                    targets_map[t_name] = sim_score * weight
+                                    
+            if targets_map:
+                sorted_results = sorted(targets_map.items(), key=lambda x: x[1], reverse=True)[:8]
+                max_val = sorted_results[0][1]
+                return [{"Target": t[0], "Score": round((t[1]/max_val)*99.5, 1), "Class": "AD/PD Pathway Prediction"} for t in sorted_results]
+                
+        except Exception as e:
+            st.warning(f"⚠️ 路徑掃描遇到技術問題：{str(e)}")
+            
+        return [{"Target": "未發現明顯已知路徑交互作用", "Score": 0.0, "Class": "N/A"}]
 
 # ==================== ADMET 規則引擎 ====================
 class FreeADMETRules:
