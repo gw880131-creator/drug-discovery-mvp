@@ -8,3 +8,5 @@ py3Dmol
 stmol
 pubchempy
 chembl_webresource_client
+ipywidgets
+ipython-genutils
