@@ -44,8 +44,21 @@ st.markdown("""
     
     .stButton>button { background: linear-gradient(to right, #2563eb, #3b82f6); color: white; border: none; border-radius: 8px; font-weight: 600; }
     
-    div[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; color: #38bdf8 !important; text-shadow: 0 0 10px rgba(56, 189, 248, 0.3); }
-    div[data-testid="stMetricLabel"] { color: #94a3b8 !important; font-size: 0.8rem; }
+   /* 指標數值：改為純白、字體放大、加入白色霓虹發光效果 */
+    div[data-testid="stMetricValue"] { 
+        font-family: 'JetBrains Mono', monospace; 
+        color: #ffffff !important; 
+        font-size: 2.5rem !important; 
+        text-shadow: 0 0 12px rgba(255, 255, 255, 0.6); 
+    }
+    
+    /* 指標標題 (如 MW, LogP)：改為亮白色、微放大並加粗 */
+    div[data-testid="stMetricLabel"] { 
+        color: #ffffff !important; 
+        font-size: 1rem !important; 
+        font-weight: 700 !important;
+        letter-spacing: 0.5px;
+    }
     
     .internal-warning {
         background-color: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center; margin-bottom: 20px; font-weight: 600; letter-spacing: 0.5px;
